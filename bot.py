@@ -2,16 +2,47 @@
 # -*- coding: utf-8 -*-
 import os
 import argparse
+import datetime
+import time
 import sqlite3
+import sys
+import json
+from collections import defaultdict
 
-DB_LOC = os.path.join(os.path.dirname(os.path.abspath(__file__), "bot.db"))
+import httpx
+from telegram import Update
+from telegram.constants import ParseMode
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    JobQueue,
+    CallbackContext,
+)
+
+API = "https://api.rating.chgk.net"
+DIR = os.path.dirname(os.path.abspath(__file__))
+DB_LOC = os.path.join(DIR, "bot.db")
 DB_INIT = """\
 CREATE TABLE IF NOT EXISTS data (
     id integer PRIMARY KEY,
+    name text,
     state text,
     chat_ids text
 );
 """
+START = """\
+Привет! Это бот-помощник для турнирного сайта.
+
+Он умеет оповещать о новых заявках на турниры.
+
+Чтобы подписаться на обновления, напиши `/subscribe` и id турниров через запятую, вот так:
+
+`/subscribe 7000, 9002, 9015`
+
+Чтобы отписаться, то же самое, но с командой `/unsubscribe`.
+"""
+
 
 def db_init():
     if not os.path.isfile(DB_LOC):
@@ -21,9 +52,184 @@ def db_init():
         conn.commit()
 
 
+def convert_request_info(request):
+    rep = request["representative"]
+    town = request["venue"]["town"]["name"]
+    return {
+        "status": request["status"],
+        "rep": f"{rep['id']} {rep['name']} {rep['surname']} ({town})",
+    }
+
+
+def get_requests(t_id, only_new=True):
+    req = httpx.get(f"{API}/tournaments/{t_id}/requests.json")
+    time.sleep(0.5)
+    if req.status_code != 200:
+        sys.stderr.write(f"got response with error {req.status_code}: {req.text}\n")
+        return
+    obj = req.json()
+    converted = {str(r["id"]): convert_request_info(r) for r in obj}
+    if only_new:
+        converted = {k: v for k, v in converted.items() if v["status"] == "N"}
+    return converted
+
+
+def get_info(t_id):
+    req = httpx.get(f"{API}/tournaments/{t_id}.json")
+    time.sleep(0.5)
+    return req.json()
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_markdown(START)
+
+
+def tryint(s):
+    try:
+        return int(s)
+    except Exception as e:
+        sys.stderr.write(f"couldn't convert {s} to int: {type(e)} {e}\n")
+        return
+
+
+def parse_chat_ids(chat_ids_str: str) -> list[int]:
+    sp = chat_ids_str.split(",")
+    return [int(x) for x in sp]
+
+
+def serialize_chat_ids(chat_ids: list[int]) -> str:
+    return ",".join(str(x) for x in chat_ids)
+
+
+def add_to_subscribers(tourn_id, chat_id) -> str:
+    conn = sqlite3.connect(DB_LOC)
+    cur = conn.cursor()
+    data = cur.execute(
+        f"""select id, name, state, chat_ids from data where id = {tourn_id}"""
+    ).fetchall()
+    if not data:
+        reqs = get_requests(tourn_id)
+        info = get_info(tourn_id)
+        name = info["name"]
+        cur.execute(
+            """insert into data(id,name,state,chat_ids) values (?,?,?,?)""",
+            (tourn_id, name, json.dumps(reqs), str(chat_id)),
+        )
+        conn.commit()
+        return f"Вы теперь подписаны на турнир {tourn_id} {name}. Там {len(reqs)} нерассмотренных заявок."
+    else:
+        data = data[0]
+        name = data[1]
+        reqs = json.loads(data[2])
+        chat_ids = parse_chat_ids(data[3])
+        if chat_id in chat_ids:
+            return f"Вы уже подписаны на турнир {tourn_id} {name}."
+        else:
+            chat_ids.append(chat_id)
+            cur.execute(
+                """update data set chat_ids = ? where id = ?""",
+                (serialize_chat_ids(chat_ids), tourn_id),
+            )
+            conn.commit()
+            return f"Вы теперь подписаны на турнир {tourn_id} {name}. Там {len(reqs)} нерассмотренных заявок."
+
+
+def remove_from_subscribers(tourn_id, chat_id) -> str:
+    conn = sqlite3.connect(DB_LOC)
+    cur = conn.cursor()
+    data = cur.execute(
+        f"""select id, name, state, chat_ids from data where id = {tourn_id}"""
+    ).fetchall()
+    if not data:
+        return f"Вы и так не подписаны на турнир {tourn_id}."
+    else:
+        data = data[0]
+        name = data[1]
+        chat_ids = parse_chat_ids(data[3])
+        if chat_id in chat_ids:
+            chat_ids = [x for x in chat_ids if x != chat_id]
+            cur.execute(
+                """update data set chat_ids = ? where id = ?""",
+                (serialize_chat_ids(chat_ids), tourn_id),
+            )
+            conn.commit()
+            return f"Вы теперь отписаны от турнира {tourn_id} {name}."
+        else:
+            return f"Вы и так не подписаны на турнир {tourn_id}."
+
+
+async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = update.message.text
+    tourn_ids = [tryint(s.strip()) for s in text.split(",") if tryint(s.strip())]
+    msgs = []
+    for id_ in tourn_ids:
+        msgs.append(add_to_subscribers(id_, update.effective_chat.id))
+    await update.message.reply_text("\n".join([x for x in msgs if x]))
+
+
+async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = update.message.text
+    tourn_ids = [tryint(s.strip()) for s in text.split(",") if tryint(s.strip())]
+    msgs = []
+    for id_ in tourn_ids:
+        msgs.append(remove_from_subscribers(id_, update.effective_chat.id))
+    await update.message.reply_text("\n".join([x for x in msgs if x]))
+
+
+async def check_requests(context: CallbackContext):
+    conn = sqlite3.connect(DB_LOC)
+    cur = conn.cursor()
+    data = cur.execute(
+        f"""select id, name, state, chat_ids from data where id = {tourn_id}"""
+    ).fetchall()
+    user_to_message = defaultdict(list)
+    for rec in data:
+        tourn_id = rec[0]
+        tourn_name = rec[1]
+        reqs = json.loads(rec[2])
+        chat_ids = parse_chat_ids(rec[3])
+        new_reqs = get_requests(tourn_id)
+        new_set = set(new_reqs) - set(reqs)
+        if new_set:
+            cur.execute(
+                """update data set state = ? where id = ?""",
+                (json.dumps(new_reqs), tourn_id),
+            )
+            conn.commit()
+            text = (
+                f"Для турнира **{tourn_id} {tourn_name}** есть новые заявки! [Рассмотреть](https://rating.chgk.info/tournament/{tourn_id}/requests)"
+                + "\n".join(sorted([new_reqs[x]["rep"] for x in (new_reqs)]))
+            )
+            for chat_id in chat_ids:
+                user_to_message[chat_id].append(text)
+    for chat_id in user_to_message:
+        final_text = "\n\n".join(user_to_message[chat_id])
+        context.application.bot.send_message(
+            chat_id, final_text, parse_mode=ParseMode.MARKDOWN_V2
+        )
+
 
 def main():
     db_init()
+    token_path = os.path.join(DIR, "token")
+    if os.path.isfile(token_path):
+        with open(token_path, "r") as f:
+            token = f.read().strip()
+    else:
+        sys.stderr.write(f"no token found at {token_path}\n")
+        sys.exit(1)
+
+    job_queue = JobQueue()
+    job_queue.run_repeating(
+        check_requests,
+        datetime.timedelta(hours=2),
+        first=datetime.time(hour=0, minute=0),
+        last=datetime.time(hour=22, minute=0),
+    )
+
+    app = ApplicationBuilder().token(token).job_queue(job_queue).build()
+    app.add_handler(CommandHandler("start", start))
+    app.run_polling()
 
 
 if __name__ == "__main__":
