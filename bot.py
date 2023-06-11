@@ -4,6 +4,7 @@ import os
 import argparse
 import datetime
 import logging
+import logging.handlers
 import time
 import sqlite3
 import sys
@@ -44,8 +45,24 @@ START = """\
 """
 UTC_PLUS_3 = datetime.timezone(datetime.timedelta(seconds=10800))
 
-formatter = logging.Formatter('%(asctime)s %(message)s')
-fileHandler = logging.FileHandler(os.path.join(DIR, "rating_bot.log"))
+class Formatter(logging.Formatter):
+    def converter(self, timestamp):
+        dt = datetime.datetime.fromtimestamp(timestamp)
+        return dt.astimezone(UTC_PLUS_3)
+        
+    def formatTime(self, record, datefmt=None):
+        dt = self.converter(record.created)
+        if datefmt:
+            s = dt.strftime(datefmt)
+        else:
+            return dt.strftime("%Y-%m-%d %H:%M:%S%z")
+        return s
+
+
+formatter = Formatter("%(asctime)s %(message)s")
+fileHandler = logging.handlers.RotatingFileHandler(
+    os.path.join(DIR, "rating_bot.log"), maxBytes=1024 * 1024 * 16
+)
 fileHandler.setFormatter(formatter)
 consoleHandler = logging.StreamHandler()
 consoleHandler.setFormatter(formatter)
@@ -123,6 +140,17 @@ def serialize_chat_ids(chat_ids: list[int]) -> str:
     return ",".join(str(x) for x in chat_ids)
 
 
+def get_req_form(x: int):
+    s_x = str(x)
+    if s_x.endswith(("11", "12", "13", "14")):
+        return "заявок"
+    if s_x.endswith("1"):
+        return "заявка"
+    if s_x.endswith(("2", "3", "4")):
+        return "заявки"
+    return "заявок"
+
+
 def add_to_subscribers(tourn_id, chat_id) -> str:
     conn = sqlite3.connect(DB_LOC)
     cur = conn.cursor()
@@ -133,14 +161,15 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
         reqs = get_requests(tourn_id)
         info = get_info(tourn_id)
         name = info["name"]
+        logger.debug(f"adding tournament {tourn_id} to base, with chat {chat_id} as first subscriber")
         cur.execute(
             """insert into data(id,name,state,chat_ids) values (?,?,?,?)""",
             (tourn_id, name, json.dumps(reqs), str(chat_id)),
         )
         conn.commit()
-        msg = f"Вы теперь подписаны на турнир {tourn_id} {name}. Там {len(reqs)} нерассмотренных заявок."
+        msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>. Там {len(reqs)} нерассмотренных {get_req_form(len(reqs))}."
         if reqs:
-            msg += f" [Рассмотреть](https://rating.chgk.info/tournament/{tourn_id}/requests)"
+            msg += f""" <a href="https://rating.chgk.info/tournament/{tourn_id}/requests)">Рассмотреть</a>"""
         return msg
     else:
         data = data[0]
@@ -148,17 +177,18 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
         reqs = json.loads(data[2])
         chat_ids = parse_chat_ids(data[3])
         if chat_id in chat_ids:
-            return f"Вы уже подписаны на турнир {tourn_id} {name}."
+            return f"Вы уже подписаны на турнир <b>{tourn_id} {name}</b>."
         else:
             chat_ids.append(chat_id)
+            logger.debug(f"adding chat {chat_id} to subscribers of tournament {tourn_id}")
             cur.execute(
                 """update data set chat_ids = ? where id = ?""",
                 (serialize_chat_ids(chat_ids), tourn_id),
             )
             conn.commit()
-            msg = f"Вы теперь подписаны на турнир {tourn_id} {name}. Там {len(reqs)} нерассмотренных заявок."
+            msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>. Там {len(reqs)} нерассмотренных {get_req_form(len(reqs))}."
             if reqs:
-                msg += f" [Рассмотреть](https://rating.chgk.info/tournament/{tourn_id}/requests)"
+                msg += f""" <a href="https://rating.chgk.info/tournament/{tourn_id}/requests)">Рассмотреть</a>"""
             return msg
 
 
@@ -177,14 +207,16 @@ def remove_from_subscribers(tourn_id, chat_id) -> str:
         if chat_id in chat_ids:
             chat_ids = [x for x in chat_ids if x != chat_id]
             if chat_ids:
+                logger.debug(f"removing chat {chat_id} from subscribers of tournament {tourn_id}")
                 cur.execute(
                     """update data set chat_ids = ? where id = ?""",
                     (serialize_chat_ids(chat_ids), tourn_id),
                 )
             else:
+                logger.debug(f"removing tournament {tourn_id} from base")
                 cur.execute("""delete from data where id = ?""", (tourn_id,))
             conn.commit()
-            return f"Вы теперь отписаны от турнира {tourn_id} {name}."
+            return f"Вы теперь отписаны от турнира <b>{tourn_id} {name}</b>."
         else:
             return f"Вы и так не подписаны на турнир {tourn_id}."
 
@@ -196,7 +228,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     for id_ in tourn_ids:
         msgs.append(add_to_subscribers(id_, update.effective_chat.id))
     if msgs:
-        await update.message.reply_markdown("\n".join([x for x in msgs if x]))
+        await update.message.reply_html("\n".join([x for x in msgs if x]))
     else:
         await update.message.reply_text(
             "Пожалуйста, укажите id турниров через запятую."
@@ -210,11 +242,21 @@ async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     for id_ in tourn_ids:
         msgs.append(remove_from_subscribers(id_, update.effective_chat.id))
     if msgs:
-        await update.message.reply_markdown("\n".join([x for x in msgs if x]))
+        await update.message.reply_html("\n".join([x for x in msgs if x]))
     else:
         await update.message.reply_text(
             "Пожалуйста, укажите id турниров через запятую."
         )
+
+
+def wrap_link(s):
+    id_ = s.split()[0]
+    return f"""<a href="https://rating.chgk.info/player/{id_}">{s}</a>"""
+
+
+def get_sorting_key(x):
+    sp = x.split()
+    return (sp[1], sp[2], sp[0])
 
 
 async def check_requests(context: CallbackContext):
@@ -244,16 +286,21 @@ async def check_requests(context: CallbackContext):
                 )
             )
         if new_diff:
-            logger.debug(f"adding requests for sending messages for tourn_id {tourn_id}")
+            logger.debug(
+                f"adding requests for sending messages for tourn_id {tourn_id}"
+            )
+            srt = sorted([new_reqs[x]["rep"] for x in new_reqs], key=get_sorting_key)
             text = (
-                f'Для турнира <b>{tourn_id} {tourn_name}</b> есть новые заявки! <a href="https://rating.chgk.info/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n'
-                + "\n".join(sorted([new_reqs[x]["rep"] for x in (new_reqs)]))
+                f'Для турнира <b>{tourn_id} {tourn_name}</b> есть {len(new_reqs)} нерассмотренных {get_req_form(len(new_reqs))}. <a href="https://rating.chgk.info/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n'
+                + "\n".join([wrap_link(rep) for rep in srt])
             )
             for chat_id in chat_ids:
                 user_to_message[chat_id].append(text)
         if parse_dt(info["dateEnd"]) < now():
             logger.debug(f"adding request for removal of tourn_id {tourn_id}")
-            reqs_for_committing.append(("""delete from data where id = ?""", (tourn_id,)))
+            reqs_for_committing.append(
+                ("""delete from data where id = ?""", (tourn_id,))
+            )
     if user_to_message:
         logger.debug(f"sending messages for tourn_id {tourn_id}")
     for chat_id in user_to_message:
