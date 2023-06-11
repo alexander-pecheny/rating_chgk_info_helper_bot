@@ -301,15 +301,14 @@ async def check_requests(context: CallbackContext):
             reqs_for_committing.append(
                 ("""delete from data where id = ?""", (tourn_id,))
             )
-    if user_to_message:
-        logger.debug(f"sending messages for tourn_id {tourn_id}")
     for chat_id in user_to_message:
+        logger.debug(f"sending messages to {chat_id}")
         final_text = "\n\n".join(user_to_message[chat_id])
         await context.application.bot.send_message(
             chat_id, final_text, parse_mode=ParseMode.HTML
         )
     if reqs_for_committing:
-        logger.debug(f"committing requests for tourn_id {tourn_id}")
+        logger.debug("committing requests")
     for tup in reqs_for_committing:
         cur.execute(*tup)
         conn.commit()
