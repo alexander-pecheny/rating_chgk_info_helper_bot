@@ -143,12 +143,12 @@ def serialize_chat_ids(chat_ids: list[int]) -> str:
 def get_req_form(x: int):
     s_x = str(x)
     if s_x.endswith(("11", "12", "13", "14")):
-        return "заявок"
+        return "нерассмотренных заявок"
     if s_x.endswith("1"):
-        return "заявка"
+        return "нерассмотренная заявка"
     if s_x.endswith(("2", "3", "4")):
-        return "заявки"
-    return "заявок"
+        return "нерассмотренные заявки"
+    return "нерассмотренных заявок"
 
 
 def add_to_subscribers(tourn_id, chat_id) -> str:
@@ -167,7 +167,7 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
             (tourn_id, name, json.dumps(reqs), str(chat_id)),
         )
         conn.commit()
-        msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>. Там {len(reqs)} нерассмотренных {get_req_form(len(reqs))}."
+        msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>. Там {len(reqs)} {get_req_form(len(reqs))}."
         if reqs:
             msg += f""" <a href="https://rating.chgk.info/tournament/{tourn_id}/requests)">Рассмотреть</a>"""
         return msg
@@ -186,7 +186,7 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
                 (serialize_chat_ids(chat_ids), tourn_id),
             )
             conn.commit()
-            msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>. Там {len(reqs)} нерассмотренных {get_req_form(len(reqs))}."
+            msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>. Там {len(reqs)} {get_req_form(len(reqs))}."
             if reqs:
                 msg += f""" <a href="https://rating.chgk.info/tournament/{tourn_id}/requests)">Рассмотреть</a>"""
             return msg
