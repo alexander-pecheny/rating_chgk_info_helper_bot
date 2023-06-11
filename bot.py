@@ -3,6 +3,7 @@
 import os
 import argparse
 import datetime
+import logging
 import time
 import sqlite3
 import sys
@@ -16,7 +17,6 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
-    JobQueue,
     CallbackContext,
 )
 
@@ -42,6 +42,25 @@ START = """\
 
 Чтобы отписаться, то же самое, но с командой `/unsubscribe`.
 """
+UTC_PLUS_3 = datetime.timezone(datetime.timedelta(seconds=10800))
+
+formatter = logging.Formatter('%(asctime)s %(message)s')
+fileHandler = logging.FileHandler(os.path.join(DIR, "rating_bot.log"))
+fileHandler.setFormatter(formatter)
+consoleHandler = logging.StreamHandler()
+consoleHandler.setFormatter(formatter)
+logger = logging.getLogger("rating_bot")
+logger.setLevel(logging.DEBUG)
+logger.addHandler(consoleHandler)
+logger.addHandler(fileHandler)
+
+
+def now():
+    return datetime.datetime.now(tz=UTC_PLUS_3)
+
+
+def parse_dt(dt):
+    return datetime.datetime.strptime(dt, "%Y-%m-%dT%H:%M:%S%z")
 
 
 def db_init():
@@ -62,8 +81,8 @@ def convert_request_info(request):
 
 
 def get_requests(t_id, only_new=True):
-    print(f"getting requests from {t_id}...")
-    req = httpx.get(f"{API}/tournaments/{t_id}/requests.json")
+    logger.debug(f"getting requests from {t_id}...")
+    req = httpx.get(f"{API}/tournaments/{t_id}/requests.json?pagination=false")
     time.sleep(0.5)
     if req.status_code != 200:
         sys.stderr.write(f"got response with error {req.status_code}: {req.text}\n")
@@ -157,10 +176,13 @@ def remove_from_subscribers(tourn_id, chat_id) -> str:
         chat_ids = parse_chat_ids(data[3])
         if chat_id in chat_ids:
             chat_ids = [x for x in chat_ids if x != chat_id]
-            cur.execute(
-                """update data set chat_ids = ? where id = ?""",
-                (serialize_chat_ids(chat_ids), tourn_id),
-            )
+            if chat_ids:
+                cur.execute(
+                    """update data set chat_ids = ? where id = ?""",
+                    (serialize_chat_ids(chat_ids), tourn_id),
+                )
+            else:
+                cur.execute("""delete from data where id = ?""", (tourn_id,))
             conn.commit()
             return f"Вы теперь отписаны от турнира {tourn_id} {name}."
         else:
@@ -168,7 +190,7 @@ def remove_from_subscribers(tourn_id, chat_id) -> str:
 
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = update.message.text[len("/subscribe"):]
+    text = update.message.text[len("/subscribe") :]
     tourn_ids = [tryint(s.strip()) for s in text.split(",") if tryint(s.strip())]
     msgs = []
     for id_ in tourn_ids:
@@ -176,11 +198,13 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if msgs:
         await update.message.reply_markdown("\n".join([x for x in msgs if x]))
     else:
-        await update.message.reply_text("Пожалуйста, укажите id турниров через запятую.")
+        await update.message.reply_text(
+            "Пожалуйста, укажите id турниров через запятую."
+        )
 
 
 async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = update.message.text[len("/unsubscribe"):]
+    text = update.message.text[len("/unsubscribe") :]
     tourn_ids = [tryint(s.strip()) for s in text.split(",") if tryint(s.strip())]
     msgs = []
     for id_ in tourn_ids:
@@ -188,16 +212,19 @@ async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if msgs:
         await update.message.reply_markdown("\n".join([x for x in msgs if x]))
     else:
-        await update.message.reply_text("Пожалуйста, укажите id турниров через запятую.")
+        await update.message.reply_text(
+            "Пожалуйста, укажите id турниров через запятую."
+        )
 
 
 async def check_requests(context: CallbackContext):
-    print("running regular job...")
+    logger.debug("running regular job...")
     conn = sqlite3.connect(DB_LOC)
     cur = conn.cursor()
-    data = cur.execute(
-        """select id, name, state, chat_ids from data"""
-    ).fetchall()
+    data = cur.execute("""select id, name, state, chat_ids from data""").fetchall()
+    for x in data:
+        logger.debug(x)
+    reqs_for_committing = []
     user_to_message = defaultdict(list)
     for rec in data:
         tourn_id = rec[0]
@@ -205,24 +232,50 @@ async def check_requests(context: CallbackContext):
         reqs = json.loads(rec[2])
         chat_ids = parse_chat_ids(rec[3])
         new_reqs = get_requests(tourn_id)
-        new_set = set(new_reqs) - set(reqs)
-        if new_set:
-            cur.execute(
-                """update data set state = ? where id = ?""",
-                (json.dumps(new_reqs), tourn_id),
+        info = get_info(tourn_id)
+        new_diff = set(new_reqs) - set(reqs)
+        old_diff = set(reqs) - set(new_reqs)
+        if new_diff or old_diff:
+            logger.debug(f"adding request for updating data for tourn_id {tourn_id}")
+            reqs_for_committing.append(
+                (
+                    """update data set state = ? where id = ?""",
+                    (json.dumps(new_reqs), tourn_id),
+                )
             )
-            conn.commit()
+        if new_diff:
+            logger.debug(f"adding requests for sending messages for tourn_id {tourn_id}")
             text = (
-                f'Для турнира <b>{tourn_id} {tourn_name}</b> есть новые заявки! <a href="https://rating.chgk.info/tournament/{tourn_id}/requests">Рассмотреть</a>'
+                f'Для турнира <b>{tourn_id} {tourn_name}</b> есть новые заявки! <a href="https://rating.chgk.info/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n'
                 + "\n".join(sorted([new_reqs[x]["rep"] for x in (new_reqs)]))
             )
             for chat_id in chat_ids:
                 user_to_message[chat_id].append(text)
+        if parse_dt(info["dateEnd"]) < now():
+            logger.debug(f"adding request for removal of tourn_id {tourn_id}")
+            reqs_for_committing.append(("""delete from data where id = ?""", (tourn_id,)))
+    if user_to_message:
+        logger.debug(f"sending messages for tourn_id {tourn_id}")
     for chat_id in user_to_message:
-        final_text = "\n\n".join(user_to_message[chat_id]).replace(".", "\\.")
+        final_text = "\n\n".join(user_to_message[chat_id])
         await context.application.bot.send_message(
             chat_id, final_text, parse_mode=ParseMode.HTML
         )
+    if reqs_for_committing:
+        logger.debug(f"committing requests for tourn_id {tourn_id}")
+    for tup in reqs_for_committing:
+        cur.execute(*tup)
+        conn.commit()
+
+
+async def echo_md(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = update.message.text[len("/echo_md ") :]
+    await update.message.reply_markdown(text)
+
+
+async def echo_html(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = update.message.text[len("/echo_html ") :]
+    await update.message.reply_html(text)
 
 
 def main():
@@ -241,10 +294,7 @@ def main():
 
     app = ApplicationBuilder().token(token).build()
     if args.debug:
-        app.job_queue.run_repeating(
-            check_requests,
-            60
-        )
+        app.job_queue.run_repeating(check_requests, 60)
     else:
         app.job_queue.run_repeating(
             check_requests,
@@ -255,6 +305,10 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(CommandHandler("unsubscribe", unsubscribe))
+    if args.debug:
+        app.add_handler(CommandHandler("echo_md", echo_md))
+        app.add_handler(CommandHandler("echo_html", echo_html))
+    logger.debug("Starting bot...")
     app.run_polling()
 
 
