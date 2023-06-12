@@ -346,7 +346,7 @@ def main():
         if utcnow.hour % 2:
             delta_hours = 1
         else:
-            delta_hours = 0
+            delta_hours = 2
         first = (utcnow + datetime.timedelta(hours=delta_hours)).replace(
             minute=0, second=0, microsecond=0
         )
