@@ -45,11 +45,12 @@ START = """\
 """
 UTC_PLUS_3 = datetime.timezone(datetime.timedelta(seconds=10800))
 
+
 class Formatter(logging.Formatter):
     def converter(self, timestamp):
         dt = datetime.datetime.fromtimestamp(timestamp)
         return dt.astimezone(UTC_PLUS_3)
-        
+
     def formatTime(self, record, datefmt=None):
         dt = self.converter(record.created)
         if datefmt:
@@ -161,7 +162,9 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
         reqs = get_requests(tourn_id)
         info = get_info(tourn_id)
         name = info["name"]
-        logger.debug(f"adding tournament {tourn_id} to base, with chat {chat_id} as first subscriber")
+        logger.debug(
+            f"adding tournament {tourn_id} to base, with chat {chat_id} as first subscriber"
+        )
         cur.execute(
             """insert into data(id,name,state,chat_ids) values (?,?,?,?)""",
             (tourn_id, name, json.dumps(reqs), str(chat_id)),
@@ -180,7 +183,9 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
             return f"Вы уже подписаны на турнир <b>{tourn_id} {name}</b>."
         else:
             chat_ids.append(chat_id)
-            logger.debug(f"adding chat {chat_id} to subscribers of tournament {tourn_id}")
+            logger.debug(
+                f"adding chat {chat_id} to subscribers of tournament {tourn_id}"
+            )
             cur.execute(
                 """update data set chat_ids = ? where id = ?""",
                 (serialize_chat_ids(chat_ids), tourn_id),
@@ -207,7 +212,9 @@ def remove_from_subscribers(tourn_id, chat_id) -> str:
         if chat_id in chat_ids:
             chat_ids = [x for x in chat_ids if x != chat_id]
             if chat_ids:
-                logger.debug(f"removing chat {chat_id} from subscribers of tournament {tourn_id}")
+                logger.debug(
+                    f"removing chat {chat_id} from subscribers of tournament {tourn_id}"
+                )
                 cur.execute(
                     """update data set chat_ids = ? where id = ?""",
                     (serialize_chat_ids(chat_ids), tourn_id),
@@ -319,6 +326,11 @@ async def echo_md(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_markdown(text)
 
 
+async def debug_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    next_ts = sorted([j.next_t for j in context.application.job_queue.jobs()])[0]
+    await update.message.reply_text(f"next regular job will be run at {next_ts}")
+
+
 async def echo_html(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text[len("/echo_html ") :]
     await update.message.reply_html(text)
@@ -356,6 +368,7 @@ def main():
             first=first,
         )
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("debug_info", debug_info))
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(CommandHandler("unsubscribe", unsubscribe))
     if args.debug:
