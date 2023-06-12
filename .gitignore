@@ -1,4 +1,4 @@
 token
 bot.db
-rating_bot.log
+*.log
 admins.json

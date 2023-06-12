@@ -73,6 +73,13 @@ logger = logging.getLogger("rating_bot")
 logger.setLevel(logging.DEBUG)
 logger.addHandler(consoleHandler)
 logger.addHandler(fileHandler)
+default_logger = logging.getLogger()
+default_fileHandler = logging.handlers.RotatingFileHandler(
+    os.path.join(DIR, "rating_bot_ext.log"), maxBytes=1024 * 1024 * 16
+)
+default_fileHandler.setFormatter(formatter)
+default_logger.setLevel(logging.DEBUG)
+default_logger.addHandler(default_fileHandler)
 
 
 def now():
@@ -331,7 +338,7 @@ async def echo_md(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def debug_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_chat.id not in ADMINS:
         await update.message.reply_text("Вы не админ бота.")
-        return 
+        return
     next_ts = sorted([j.next_t for j in context.application.job_queue.jobs()])[0]
     await update.message.reply_text(f"next regular job will be run at {next_ts}")
 
@@ -349,8 +356,9 @@ async def log_tail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not os.path.isfile(log_path):
         await update.message.reply_text("Лог-файл не найден.")
         return
-    tail = subprocess.check_output(["tail", "-n", "25", log_path]).decode("utf8")
-    await update.message.reply_text(tail)
+    with open(log_path, "r") as f:
+        cnt = f.read().split("\n")
+    await update.message.reply_text("\n".join(cnt[-25:]))
 
 
 def main():
