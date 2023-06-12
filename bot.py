@@ -3,12 +3,13 @@
 import os
 import argparse
 import datetime
+import json
 import logging
 import logging.handlers
 import time
 import sqlite3
+import subprocess
 import sys
-import json
 from collections import defaultdict
 
 import httpx
@@ -44,6 +45,7 @@ START = """\
 Чтобы отписаться, то же самое, но с командой `/unsubscribe`.
 """
 UTC_PLUS_3 = datetime.timezone(datetime.timedelta(seconds=10800))
+ADMINS = []
 
 
 class Formatter(logging.Formatter):
@@ -327,6 +329,9 @@ async def echo_md(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def debug_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat.id not in ADMINS:
+        await update.message.reply_text("Вы не админ бота.")
+        return 
     next_ts = sorted([j.next_t for j in context.application.job_queue.jobs()])[0]
     await update.message.reply_text(f"next regular job will be run at {next_ts}")
 
@@ -336,10 +341,27 @@ async def echo_html(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_html(text)
 
 
+async def log_tail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat.id not in ADMINS:
+        await update.message.reply_text("Вы не админ бота.")
+        return
+    log_path = os.path.join(DIR, "rating_bot.log")
+    if not os.path.isfile(log_path):
+        await update.message.reply_text("Лог-файл не найден.")
+        return
+    tail = subprocess.check_output(["tail", "-n", "25", log_path]).decode("utf8")
+    await update.message.reply_text(tail)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
+
+    admins_path = os.path.join(DIR, "admins.json")
+    if os.path.exists(admins_path):
+        with open(admins_path) as f:
+            ADMINS.extend(json.loads(f.read()))
 
     db_init()
     token_path = os.path.join(DIR, "token")
@@ -369,6 +391,7 @@ def main():
         )
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("debug_info", debug_info))
+    app.add_handler(CommandHandler("log_tail", log_tail))
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(CommandHandler("unsubscribe", unsubscribe))
     if args.debug:
