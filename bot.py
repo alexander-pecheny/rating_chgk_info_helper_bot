@@ -342,11 +342,18 @@ def main():
     if args.debug:
         app.job_queue.run_repeating(check_requests, 60)
     else:
+        utcnow = datetime.datetime.utcnow()
+        if utcnow.hour % 2:
+            delta_hours = 1
+        else:
+            delta_hours = 0
+        first = (utcnow + datetime.timedelta(hours=delta_hours)).replace(
+            minute=0, second=0, microsecond=0
+        )
         app.job_queue.run_repeating(
             check_requests,
             datetime.timedelta(hours=2),
-            first=datetime.time(hour=0, minute=0),
-            last=datetime.time(hour=22, minute=0),
+            first=first,
         )
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("subscribe", subscribe))
