@@ -291,7 +291,7 @@ async def check_requests(context: CallbackContext):
             )
             srt = sorted([new_reqs[x]["rep"] for x in new_reqs], key=get_sorting_key)
             text = (
-                f'Для турнира <b>{tourn_id} {tourn_name}</b> есть {len(new_reqs)} нерассмотренных {get_req_form(len(new_reqs))}. <a href="https://rating.chgk.info/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n'
+                f'Для турнира <b>{tourn_id} {tourn_name}</b> есть {len(new_reqs)} {get_req_form(len(new_reqs))}. <a href="https://rating.chgk.info/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n'
                 + "\n".join([wrap_link(rep) for rep in srt])
             )
             for chat_id in chat_ids:
