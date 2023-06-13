@@ -361,6 +361,26 @@ async def log_tail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("\n".join(cnt[-25:]))
 
 
+async def get_subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat.id not in ADMINS:
+        await update.message.reply_text("Вы не админ бота.")
+        return
+    conn = sqlite3.connect(DB_LOC)
+    data = conn.cursor().execute("""select id, name, chat_ids from data""").fetchall()
+    user_to_tourns = defaultdict(list)
+    for row in data:
+        chat_ids = parse_chat_ids(row[2])
+        for chat_id in chat_ids:
+            user_to_tourns[chat_id].append(f"{row[0]} {row[1]}")
+    result = []
+    for i, user in enumerate(sorted(user_to_tourns)):
+        tourns = user_to_tourns[user]
+        result.append(
+            f"{i + 1}. {user} - {len(tourns)} tournaments ({', '.join(tourns)})"
+        )
+    await update.message.reply_text("\n".join(result))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true")
@@ -398,10 +418,11 @@ def main():
             first=first,
         )
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("debug_info", debug_info))
-    app.add_handler(CommandHandler("log_tail", log_tail))
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(CommandHandler("unsubscribe", unsubscribe))
+    app.add_handler(CommandHandler("debug_info", debug_info))
+    app.add_handler(CommandHandler("log_tail", log_tail))
+    app.add_handler(CommandHandler("get_subscribers", get_subscribers))
     if args.debug:
         app.add_handler(CommandHandler("echo_md", echo_md))
         app.add_handler(CommandHandler("echo_html", echo_html))
