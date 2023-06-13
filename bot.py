@@ -378,6 +378,7 @@ async def get_subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         result.append(
             f"{i + 1}. {user} - {len(tourns)} tournaments ({', '.join(tourns)})"
         )
+    result.append(f"{len(result)} chats subscribed to {len(data)} unique tournaments")
     await update.message.reply_text("\n".join(result))
 
 
