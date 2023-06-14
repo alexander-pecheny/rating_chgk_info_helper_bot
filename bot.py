@@ -396,10 +396,13 @@ async def my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         for chat_id in chat_ids:
             user_to_tourns[chat_id].append(f"{row[0]} {row[1]}")
     tourns = user_to_tourns[update.effective_chat.id]
-    text = "Турниры, на которые вы подписаны:\n" + "\n".join(
-        [tourn_wrap_link(s) for s in tourns]
-    )
-    await update.message.reply_html(text)
+    if tourns:
+        text = "Турниры, на которые вы подписаны:\n" + "\n".join(
+            [tourn_wrap_link(s) for s in tourns]
+        )
+        await update.message.reply_html(text)
+    else:
+        await update.message.reply_text("Сейчас вы не подписаны ни на один турнир.")
 
 
 def main():
