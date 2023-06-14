@@ -270,6 +270,11 @@ def wrap_link(s):
     return f"""<a href="https://rating.chgk.info/player/{id_}">{s}</a>"""
 
 
+def tourn_wrap_link(s):
+    id_ = s.split()[0]
+    return f"""<a href="https://rating.chgk.info/tournament/{id_}">{s}</a>"""
+
+
 def get_sorting_key(x):
     sp = x.split()
     return (sp[1], sp[2], sp[0])
@@ -382,6 +387,21 @@ async def get_subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text("\n".join(result))
 
 
+async def my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    conn = sqlite3.connect(DB_LOC)
+    data = conn.cursor().execute("""select id, name, chat_ids from data""").fetchall()
+    user_to_tourns = defaultdict(list)
+    for row in data:
+        chat_ids = parse_chat_ids(row[2])
+        for chat_id in chat_ids:
+            user_to_tourns[chat_id].append(f"{row[0]} {row[1]}")
+    tourns = user_to_tourns[update.effective_chat.id]
+    text = "Турниры, на которые вы подписаны:\n" + "\n".join(
+        [tourn_wrap_link(s) for s in tourns]
+    )
+    await update.message.reply_html(text)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true")
@@ -421,6 +441,9 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(CommandHandler("unsubscribe", unsubscribe))
+    app.add_handler(CommandHandler("my_subscriptions", my_subscriptions))
+
+    #  admin commands below
     app.add_handler(CommandHandler("debug_info", debug_info))
     app.add_handler(CommandHandler("log_tail", log_tail))
     app.add_handler(CommandHandler("get_subscribers", get_subscribers))
