@@ -246,8 +246,8 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if msgs:
         await update.message.reply_html("\n".join([x for x in msgs if x]))
     else:
-        await update.message.reply_text(
-            "Пожалуйста, укажите id турниров через запятую."
+        await update.message.reply_html(
+            "Пожалуйста, укажите id турниров через запятую: <pre>/subscribe 1, 2, 3</pre>"
         )
 
 
