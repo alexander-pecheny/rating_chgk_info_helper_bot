@@ -181,7 +181,7 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
         conn.commit()
         msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>. Там {len(reqs)} {get_req_form(len(reqs))}."
         if reqs:
-            msg += f""" <a href="https://rating.chgk.info/tournament/{tourn_id}/requests)">Рассмотреть</a>"""
+            msg += f""" <a href="https://rating.chgk.info/tournament/{tourn_id}/requests">Рассмотреть</a>"""
         return msg
     else:
         data = data[0]
@@ -202,7 +202,7 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
             conn.commit()
             msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>. Там {len(reqs)} {get_req_form(len(reqs))}."
             if reqs:
-                msg += f""" <a href="https://rating.chgk.info/tournament/{tourn_id}/requests)">Рассмотреть</a>"""
+                msg += f""" <a href="https://rating.chgk.info/tournament/{tourn_id}/requests">Рассмотреть</a>"""
             return msg
 
 
@@ -280,6 +280,11 @@ def get_sorting_key(x):
     return (sp[1], sp[2], sp[0])
 
 
+def make_msg_from_reqs(reqs):
+    srt = sorted([reqs[x]["rep"] for x in reqs], key=get_sorting_key)
+    return "\n".join([wrap_link(rep) for rep in srt])
+
+
 async def check_requests(context: CallbackContext):
     logger.debug("running regular job...")
     conn = sqlite3.connect(DB_LOC)
@@ -289,15 +294,20 @@ async def check_requests(context: CallbackContext):
         logger.debug(x)
     reqs_for_committing = []
     user_to_message = defaultdict(list)
+    tourn_to_reqs = {}
+    user_to_subscriptions = defaultdict(list)
     for rec in data:
         tourn_id = rec[0]
         tourn_name = rec[1]
         reqs = json.loads(rec[2])
         chat_ids = parse_chat_ids(rec[3])
+        for chat_id in chat_ids:
+            user_to_subscriptions[chat_id].append((tourn_id, tourn_name))
         new_reqs = get_requests(tourn_id)
         info = get_info(tourn_id)
         new_diff = set(new_reqs) - set(reqs)
         old_diff = set(reqs) - set(new_reqs)
+        tourn_to_reqs[(tourn_id, tourn_name)] = new_reqs
         if new_diff or old_diff:
             logger.debug(f"adding request for updating data for tourn_id {tourn_id}")
             reqs_for_committing.append(
@@ -310,21 +320,32 @@ async def check_requests(context: CallbackContext):
             logger.debug(
                 f"adding requests for sending messages for tourn_id {tourn_id}"
             )
-            srt = sorted([new_reqs[x]["rep"] for x in new_reqs], key=get_sorting_key)
             text = (
                 f'Для турнира <b>{tourn_id} {tourn_name}</b> есть {len(new_reqs)} {get_req_form(len(new_reqs))}. <a href="https://rating.chgk.info/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n'
-                + "\n".join([wrap_link(rep) for rep in srt])
+                + make_msg_from_reqs(new_reqs)
             )
             for chat_id in chat_ids:
-                user_to_message[chat_id].append(text)
+                user_to_message[chat_id].append((tourn_id, text))
         if parse_dt(info["dateEnd"]) < now():
             logger.debug(f"adding request for removal of tourn_id {tourn_id}")
             reqs_for_committing.append(
                 ("""delete from data where id = ?""", (tourn_id,))
             )
     for chat_id in user_to_message:
+        tups = user_to_message[chat_id]
+        texts = [x[1] for x in tups]
+        tourn_ids = [x[0] for x in tups]
+        other_subscribed_tourns = [t for t in user_to_subscriptions[chat_id] if t[0] not in tourn_ids]
+        for t in sorted(other_subscribed_tourns):
+            tourn_id, tourn_name = t
+            reqs = tourn_to_reqs[t]
+            if reqs:
+                texts.append(
+                    f"""Ранее нерассмотренные заявки на турнир <b>{tourn_id} {tourn_name}</b>. <a href="https://rating.chgk.info/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n"""
+                    + make_msg_from_reqs(reqs)
+                )
         logger.debug(f"sending messages to {chat_id}")
-        final_text = "\n\n".join(user_to_message[chat_id])
+        final_text = "\n\n".join(texts)
         await context.application.bot.send_message(
             chat_id, final_text, parse_mode=ParseMode.HTML
         )
@@ -364,6 +385,14 @@ async def log_tail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     with open(log_path, "r") as f:
         cnt = f.read().split("\n")
     await update.message.reply_text("\n".join(cnt[-25:]))
+
+
+async def run_check_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat.id not in ADMINS:
+        await update.message.reply_text("Вы не админ бота.")
+        return
+    await update.message.reply_text("running regular job..")
+    context.application.job_queue.run_once(check_requests, when=1)
 
 
 async def get_subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -425,9 +454,7 @@ def main():
         sys.exit(1)
 
     app = ApplicationBuilder().token(token).build()
-    if args.debug:
-        app.job_queue.run_repeating(check_requests, 60)
-    else:
+    if not args.debug:
         utcnow = datetime.datetime.utcnow()
         if utcnow.hour % 2:
             delta_hours = 1
@@ -450,6 +477,7 @@ def main():
     app.add_handler(CommandHandler("debug_info", debug_info))
     app.add_handler(CommandHandler("log_tail", log_tail))
     app.add_handler(CommandHandler("get_subscribers", get_subscribers))
+    app.add_handler(CommandHandler("run_check_requests", run_check_requests))
     if args.debug:
         app.add_handler(CommandHandler("echo_md", echo_md))
         app.add_handler(CommandHandler("echo_html", echo_html))
