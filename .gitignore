@@ -1,4 +1,5 @@
 token
+token_test
 bot.db
 *.log
 admins.json
