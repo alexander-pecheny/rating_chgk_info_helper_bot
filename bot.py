@@ -8,7 +8,6 @@ import logging
 import logging.handlers
 import time
 import sqlite3
-import subprocess
 import sys
 from collections import defaultdict
 
@@ -20,6 +19,9 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     CallbackContext,
+    ConversationHandler,
+    MessageHandler,
+    filters
 )
 
 API = "https://api.rating.chgk.net"
@@ -62,9 +64,10 @@ class Formatter(logging.Formatter):
         return s
 
 
+log_suffix = '_debug' if 'token_path' in ' '.join(sys.argv) else ''
 formatter = Formatter("%(asctime)s %(message)s")
 fileHandler = logging.handlers.RotatingFileHandler(
-    os.path.join(DIR, "rating_bot.log"), maxBytes=1024 * 1024 * 16
+    os.path.join(DIR, f"rating_bot{log_suffix}.log"), maxBytes=1024 * 1024 * 16
 )
 fileHandler.setFormatter(formatter)
 consoleHandler = logging.StreamHandler()
@@ -235,9 +238,27 @@ def remove_from_subscribers(tourn_id, chat_id) -> str:
             return f"Вы теперь отписаны от турнира <b>{tourn_id} {name}</b>."
         else:
             return f"Вы и так не подписаны на турнир {tourn_id}."
+        
+
+async def subscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text
+    await update.message.reply_text("not implemented")
+    return -1
+    tourn_ids = [tryint(s.strip()) for s in text.split(",") if tryint(s.strip())]
+    msgs = []
+    for id_ in tourn_ids:
+        msgs.append(add_to_subscribers(id_, update.effective_chat.id))
+    if msgs:
+        await update.message.reply_html("\n".join([x for x in msgs if x]))
+        return -1
+    else:
+        await update.message.reply_html(
+            "Пожалуйста, укажите id турниров через запятую: <pre>/subscribe 1, 2, 3</pre>"
+        )
+        return 1
 
 
-async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text[len("/subscribe") :]
     tourn_ids = [tryint(s.strip()) for s in text.split(",") if tryint(s.strip())]
     msgs = []
@@ -245,10 +266,12 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msgs.append(add_to_subscribers(id_, update.effective_chat.id))
     if msgs:
         await update.message.reply_html("\n".join([x for x in msgs if x]))
+        return -1
     else:
         await update.message.reply_html(
             "Пожалуйста, укажите id турниров через запятую: <pre>/subscribe 1, 2, 3</pre>"
         )
+        return 1
 
 
 async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -434,9 +457,16 @@ async def my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("Сейчас вы не подписаны ни на один турнир.")
 
 
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancels and ends the conversation."""
+    logger.info(f"chat {update.effective_chat.id} canceled the conversation.")
+    return ConversationHandler.END
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--token_path")
     args = parser.parse_args()
 
     admins_path = os.path.join(DIR, "admins.json")
@@ -445,7 +475,7 @@ def main():
             ADMINS.extend(json.loads(f.read()))
 
     db_init()
-    token_path = os.path.join(DIR, "token")
+    token_path = args.token_path or os.path.join(DIR, "token")
     if os.path.isfile(token_path):
         with open(token_path, "r") as f:
             token = f.read().strip()
@@ -469,7 +499,15 @@ def main():
             first=first,
         )
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("subscribe", subscribe))
+    # app.add_handler(CommandHandler("subscribe", subscribe))
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("subscribe", subscribe)],
+        states={
+            1: [MessageHandler(filters.Regex(".*"), subscribe_msg)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    app.add_handler(conv_handler)
     app.add_handler(CommandHandler("unsubscribe", unsubscribe))
     app.add_handler(CommandHandler("my_subscriptions", my_subscriptions))
 
