@@ -46,6 +46,8 @@ START = """\
 
 Чтобы отписаться, то же самое, но с командой `/unsubscribe`.
 """
+ID_TOURNS_TEXT = "Пожалуйста, укажите id турниров через запятую или /cancel для отмены."
+NOT_CANCEL = "^(?!/cancel)"
 UTC_PLUS_3 = datetime.timezone(datetime.timedelta(seconds=10800))
 ADMINS = []
 
@@ -242,8 +244,6 @@ def remove_from_subscribers(tourn_id, chat_id) -> str:
 
 async def subscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
-    await update.message.reply_text("not implemented")
-    return -1
     tourn_ids = [tryint(s.strip()) for s in text.split(",") if tryint(s.strip())]
     msgs = []
     for id_ in tourn_ids:
@@ -253,7 +253,7 @@ async def subscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return -1
     else:
         await update.message.reply_html(
-            "Пожалуйста, укажите id турниров через запятую: <pre>/subscribe 1, 2, 3</pre>"
+            ID_TOURNS_TEXT
         )
         return 1
 
@@ -269,7 +269,23 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return -1
     else:
         await update.message.reply_html(
-            "Пожалуйста, укажите id турниров через запятую: <pre>/subscribe 1, 2, 3</pre>"
+            ID_TOURNS_TEXT
+        )
+        return 1
+    
+
+async def unsubscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text
+    tourn_ids = [tryint(s.strip()) for s in text.split(",") if tryint(s.strip())]
+    msgs = []
+    for id_ in tourn_ids:
+        msgs.append(remove_from_subscribers(id_, update.effective_chat.id))
+    if msgs:
+        await update.message.reply_html("\n".join([x for x in msgs if x]))
+        return -1
+    else:
+        await update.message.reply_html(
+            ID_TOURNS_TEXT
         )
         return 1
 
@@ -282,10 +298,12 @@ async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         msgs.append(remove_from_subscribers(id_, update.effective_chat.id))
     if msgs:
         await update.message.reply_html("\n".join([x for x in msgs if x]))
+        return -1
     else:
         await update.message.reply_text(
-            "Пожалуйста, укажите id турниров через запятую."
+           ID_TOURNS_TEXT
         )
+        return 1
 
 
 def wrap_link(s):
@@ -459,6 +477,7 @@ async def my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Cancels and ends the conversation."""
+    await update.message.reply_text("Команда отменена.")
     logger.info(f"chat {update.effective_chat.id} canceled the conversation.")
     return ConversationHandler.END
 
@@ -499,16 +518,25 @@ def main():
             first=first,
         )
     app.add_handler(CommandHandler("start", start))
-    # app.add_handler(CommandHandler("subscribe", subscribe))
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("subscribe", subscribe)],
         states={
-            1: [MessageHandler(filters.Regex(".*"), subscribe_msg)],
+            1: [
+                MessageHandler(filters.Regex(NOT_CANCEL), subscribe_msg)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
+        conversation_timeout=300
     )
     app.add_handler(conv_handler)
-    app.add_handler(CommandHandler("unsubscribe", unsubscribe))
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("unsubscribe", unsubscribe)],
+        states={
+            1: [MessageHandler(filters.Regex(NOT_CANCEL), unsubscribe_msg)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        conversation_timeout=300
+    )
+    app.add_handler(conv_handler)
     app.add_handler(CommandHandler("my_subscriptions", my_subscriptions))
 
     #  admin commands below
