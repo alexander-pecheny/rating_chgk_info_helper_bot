@@ -186,7 +186,7 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
         conn.commit()
         msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>. Там {len(reqs)} {get_req_form(len(reqs))}."
         if reqs:
-            msg += f""" <a href="https://rating.chgk.info/tournament/{tourn_id}/requests">Рассмотреть</a>"""
+            msg += f""" <a href="https://rating.pecheny.me/tournament/{tourn_id}/requests">Рассмотреть</a>"""
         return msg
     else:
         data = data[0]
@@ -207,7 +207,7 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
             conn.commit()
             msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>. Там {len(reqs)} {get_req_form(len(reqs))}."
             if reqs:
-                msg += f""" <a href="https://rating.chgk.info/tournament/{tourn_id}/requests">Рассмотреть</a>"""
+                msg += f""" <a href="https://rating.pecheny.me/tournament/{tourn_id}/requests">Рассмотреть</a>"""
             return msg
 
 
@@ -308,12 +308,12 @@ async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 def wrap_link(s):
     id_ = s.split()[0]
-    return f"""<a href="https://rating.chgk.info/player/{id_}">{s}</a>"""
+    return f"""<a href="https://rating.pecheny.me/player/{id_}">{s}</a>"""
 
 
 def tourn_wrap_link(s):
     id_ = s.split()[0]
-    return f"""<a href="https://rating.chgk.info/tournament/{id_}">{s}</a>"""
+    return f"""<a href="https://rating.pecheny.me/tournament/{id_}">{s}</a>"""
 
 
 def get_sorting_key(x):
@@ -362,7 +362,7 @@ async def check_requests(context: CallbackContext):
                 f"adding requests for sending messages for tourn_id {tourn_id}"
             )
             text = (
-                f'Для турнира <b>{tourn_id} {tourn_name}</b> есть {len(new_reqs)} {get_req_form(len(new_reqs))}. <a href="https://rating.chgk.info/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n'
+                f'Для турнира <b>{tourn_id} {tourn_name}</b> есть {len(new_reqs)} {get_req_form(len(new_reqs))}. <a href="https://rating.pecheny.me/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n'
                 + make_msg_from_reqs(new_reqs)
             )
             for chat_id in chat_ids:
@@ -382,7 +382,7 @@ async def check_requests(context: CallbackContext):
             reqs = tourn_to_reqs[t]
             if reqs:
                 texts.append(
-                    f"""Ранее нерассмотренные заявки на турнир <b>{tourn_id} {tourn_name}</b>. <a href="https://rating.chgk.info/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n"""
+                    f"""Ранее нерассмотренные заявки на турнир <b>{tourn_id} {tourn_name}</b>. <a href="https://rating.pecheny.me/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n"""
                     + make_msg_from_reqs(reqs)
                 )
         logger.debug(f"sending messages to {chat_id}")
