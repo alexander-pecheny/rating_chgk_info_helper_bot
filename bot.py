@@ -416,7 +416,7 @@ def make_msg_from_reqs(reqs):
     return "\n".join([wrap_link(rep) for rep in srt])
 
 
-async def check_requests(context: CallbackContext):
+async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
     logger.debug("running regular job...")
     conn = sqlite3.connect(DB_LOC)
     cur = conn.cursor()
@@ -439,7 +439,7 @@ async def check_requests(context: CallbackContext):
         new_diff = set(new_reqs) - set(reqs)
         old_diff = set(reqs) - set(new_reqs)
         tourn_to_reqs[(tourn_id, tourn_name)] = new_reqs
-        if new_diff or old_diff:
+        if (new_diff or old_diff) and not chat_ids_whitelist:
             logger.debug(f"adding request for updating data for tourn_id {tourn_id}")
             reqs_for_committing.append(
                 (
@@ -456,15 +456,19 @@ async def check_requests(context: CallbackContext):
                 + make_msg_from_reqs(new_reqs)
             )
             for chat_id in chat_ids:
+                if chat_ids_whitelist and chat_id not in chat_ids_whitelist:
+                    continue
                 prefs = get_prefs(chat_id)
                 host = prefs.get("host") or "rating.chgk.info"
                 user_to_message[chat_id].append((tourn_id, text.format(host=host)))
-        if parse_dt(info["dateEnd"]) < now():
+        if not chat_ids_whitelist and parse_dt(info["dateEnd"]) < now():
             logger.debug(f"adding request for removal of tourn_id {tourn_id}")
             reqs_for_committing.append(
                 ("""delete from data where id = ?""", (tourn_id,))
             )
     for chat_id in user_to_message:
+        if chat_ids_whitelist and chat_id not in chat_ids_whitelist:
+            continue
         tups = user_to_message[chat_id]
         texts = [x[1] for x in tups]
         tourn_ids = [x[0] for x in tups]
@@ -484,11 +488,18 @@ async def check_requests(context: CallbackContext):
         await context.application.bot.send_message(
             chat_id, final_text, parse_mode=ParseMode.HTML
         )
-    if reqs_for_committing:
+    if not chat_ids_whitelist and reqs_for_committing:
         logger.debug("committing requests")
-    for tup in reqs_for_committing:
-        cur.execute(*tup)
-        conn.commit()
+        for tup in reqs_for_committing:
+            cur.execute(*tup)
+            conn.commit()
+
+
+async def check_requests(context: CallbackContext):
+    await _check_requests(context=context)
+
+async def check_requests_debug(context: CallbackContext):
+    await _check_requests(context=context, chat_ids_whitelist=ADMINS)
 
 
 async def echo_md(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -528,6 +539,14 @@ async def run_check_requests(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     await update.message.reply_text("running regular job..")
     context.application.job_queue.run_once(check_requests, when=1)
+
+
+async def run_check_requests_debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat.id not in ADMINS:
+        await update.message.reply_text("Вы не админ бота.")
+        return
+    await update.message.reply_text("running regular job in debug mode..")
+    context.application.job_queue.run_once(check_requests_debug, when=1)
 
 
 async def get_subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -650,6 +669,7 @@ def main():
     app.add_handler(CommandHandler("log_tail", log_tail))
     app.add_handler(CommandHandler("get_subscribers", get_subscribers))
     app.add_handler(CommandHandler("run_check_requests", run_check_requests))
+    app.add_handler(CommandHandler("run_check_requests_debug", run_check_requests_debug))
     if args.debug:
         app.add_handler(CommandHandler("echo_md", echo_md))
         app.add_handler(CommandHandler("echo_html", echo_html))
