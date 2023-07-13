@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import os
+import re
 import argparse
 import datetime
 import json
@@ -9,6 +10,7 @@ import logging.handlers
 import time
 import sqlite3
 import sys
+import urllib
 from collections import defaultdict
 
 import httpx
@@ -32,8 +34,13 @@ CREATE TABLE IF NOT EXISTS data (
     id integer PRIMARY KEY,
     name text,
     state text,
-    chat_ids text
+    chat_ids text,
+    prefs text
 );
+CREATE TABLE IF NOT EXISTS chat_prefs (
+    chat_id integer PRIMARY KEY,
+    prefs text
+)
 """
 START = """\
 Привет! Это бот-помощник для турнирного сайта.
@@ -166,12 +173,23 @@ def get_req_form(x: int):
     return "нерассмотренных заявок"
 
 
+def get_prefs(chat_id):
+    conn = sqlite3.connect(DB_LOC)
+    cur = conn.cursor()
+    prefs_list = cur.execute(f"""select chat_id, prefs from chat_prefs where chat_id = {chat_id}""").fetchall()
+    if prefs_list:
+        return json.loads(prefs_list[0][1])
+    return {}
+
+
 def add_to_subscribers(tourn_id, chat_id) -> str:
     conn = sqlite3.connect(DB_LOC)
     cur = conn.cursor()
     data = cur.execute(
         f"""select id, name, state, chat_ids from data where id = {tourn_id}"""
     ).fetchall()
+    prefs = get_prefs(chat_id)
+    host = prefs.get("host") or "rating.chgk.info"
     if not data:
         reqs = get_requests(tourn_id)
         info = get_info(tourn_id)
@@ -186,7 +204,7 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
         conn.commit()
         msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>. Там {len(reqs)} {get_req_form(len(reqs))}."
         if reqs:
-            msg += f""" <a href="https://rating.pecheny.me/tournament/{tourn_id}/requests">Рассмотреть</a>"""
+            msg += f""" <a href="https://{host}/tournament/{tourn_id}/requests">Рассмотреть</a>"""
         return msg
     else:
         data = data[0]
@@ -207,7 +225,7 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
             conn.commit()
             msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>. Там {len(reqs)} {get_req_form(len(reqs))}."
             if reqs:
-                msg += f""" <a href="https://rating.pecheny.me/tournament/{tourn_id}/requests">Рассмотреть</a>"""
+                msg += f""" <a href="https://{host}/tournament/{tourn_id}/requests">Рассмотреть</a>"""
             return msg
 
 
@@ -240,6 +258,31 @@ def remove_from_subscribers(tourn_id, chat_id) -> str:
             return f"Вы теперь отписаны от турнира <b>{tourn_id} {name}</b>."
         else:
             return f"Вы и так не подписаны на турнир {tourn_id}."
+        
+
+def set_host_req(host: str, chat_id: int) -> str:
+    conn = sqlite3.connect(DB_LOC)
+    cur = conn.cursor()
+    data = cur.execute(
+        f"""select chat_id, prefs from chat_prefs where chat_id = {chat_id}"""
+    ).fetchall()
+    if data:
+        prefs = json.loads(data[0][1])
+    else:
+        prefs = {}
+    prefs["host"] = host
+    if data:
+        cur.execute(
+            """update chat_prefs set prefs = ? where chat_id = ?""",
+            (json.dumps(prefs), chat_id)
+        )
+    else:
+        cur.execute(
+            """insert into chat_prefs(chat_id,prefs) values (?,?)""",
+            (chat_id, json.dumps(prefs))
+        )
+    conn.commit()
+    return f"Ваш хост теперь <pre>{host}</pre>."
         
 
 async def subscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -304,16 +347,63 @@ async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
            ID_TOURNS_TEXT
         )
         return 1
+    
+RE_HOST = re.compile("[a-z][a-z\\.]+[a-z]")
+    
+def strip_host(host):
+    host = (host or "").strip()
+    for prefix in ("http://", "https://", "www."):
+        if host.startswith(prefix):
+            host = host[len(prefix):]
+    host = urllib.parse.urlparse("https://" + host).netloc
+    return host
+
+
+def validate_host(host):
+    return host and RE_HOST.search(host) and "." in host
+
+    
+
+async def set_host(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = update.message.text[len("/set_host") :]
+    host = strip_host(text)
+    msgs = []
+    if not host:
+        await update.message.reply_html(
+           "Введите новый хост (например, <pre>rating.chgk.info</pre> или <pre>rating.pecheny.me</pre>)"
+        )
+        return 1
+    elif validate_host(host):
+        msgs.append(set_host_req(host, update.effective_chat.id))
+    else:
+        await update.message.reply_html("Не удалось распарсить хост, попробуйте ещё раз")
+        return 1
+    if msgs:
+        await update.message.reply_html("\n".join([x for x in msgs if x]))
+    return -1
+    
+async def set_host_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text
+    host = strip_host(text)
+    msgs = []
+    if validate_host(host):
+        msgs.append(set_host_req(host, update.effective_chat.id))
+    else:
+        await update.message.reply_html("Не удалось распарсить хост, попробуйте ещё раз")
+        return 1
+    if msgs:
+        await update.message.reply_html("\n".join([x for x in msgs if x]))
+    return -1
 
 
 def wrap_link(s):
     id_ = s.split()[0]
-    return f"""<a href="https://rating.pecheny.me/player/{id_}">{s}</a>"""
+    return f"""<a href="https://{{host}}/player/{id_}">{s}</a>"""
 
 
 def tourn_wrap_link(s):
     id_ = s.split()[0]
-    return f"""<a href="https://rating.pecheny.me/tournament/{id_}">{s}</a>"""
+    return f"""<a href="https://{{host}}/tournament/{id_}">{s}</a>"""
 
 
 def get_sorting_key(x):
@@ -362,11 +452,13 @@ async def check_requests(context: CallbackContext):
                 f"adding requests for sending messages for tourn_id {tourn_id}"
             )
             text = (
-                f'Для турнира <b>{tourn_id} {tourn_name}</b> есть {len(new_reqs)} {get_req_form(len(new_reqs))}. <a href="https://rating.pecheny.me/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n'
+                f'Для турнира <b>{tourn_id} {tourn_name}</b> есть {len(new_reqs)} {get_req_form(len(new_reqs))}. <a href="https://{{host}}/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n'
                 + make_msg_from_reqs(new_reqs)
             )
             for chat_id in chat_ids:
-                user_to_message[chat_id].append((tourn_id, text))
+                prefs = get_prefs(chat_id)
+                host = prefs.get("host") or "rating.chgk.info"
+                user_to_message[chat_id].append((tourn_id, text.format(host=host)))
         if parse_dt(info["dateEnd"]) < now():
             logger.debug(f"adding request for removal of tourn_id {tourn_id}")
             reqs_for_committing.append(
@@ -377,12 +469,14 @@ async def check_requests(context: CallbackContext):
         texts = [x[1] for x in tups]
         tourn_ids = [x[0] for x in tups]
         other_subscribed_tourns = [t for t in user_to_subscriptions[chat_id] if t[0] not in tourn_ids]
+        prefs = get_prefs(chat_id)
+        host = prefs.get("host") or "rating.chgk.info"
         for t in sorted(other_subscribed_tourns):
             tourn_id, tourn_name = t
             reqs = tourn_to_reqs[t]
             if reqs:
                 texts.append(
-                    f"""Ранее нерассмотренные заявки на турнир <b>{tourn_id} {tourn_name}</b>. <a href="https://rating.pecheny.me/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n"""
+                    f"""Ранее нерассмотренные заявки на турнир <b>{tourn_id} {tourn_name}</b>. <a href="https://{host}/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n"""
                     + make_msg_from_reqs(reqs)
                 )
         logger.debug(f"sending messages to {chat_id}")
@@ -465,10 +559,13 @@ async def my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         chat_ids = parse_chat_ids(row[2])
         for chat_id in chat_ids:
             user_to_tourns[chat_id].append(f"{row[0]} {row[1]}")
-    tourns = user_to_tourns[update.effective_chat.id]
+    chat_id = update.effective_chat.id
+    tourns = user_to_tourns[chat_id]
+    prefs = get_prefs(chat_id)
+    host = prefs.get("host") or "rating.chgk.info"
     if tourns:
         text = "Турниры, на которые вы подписаны:\n" + "\n".join(
-            [tourn_wrap_link(s) for s in tourns]
+            [tourn_wrap_link(s).format(host=host) for s in tourns]
         )
         await update.message.reply_html(text)
     else:
@@ -532,6 +629,15 @@ def main():
         entry_points=[CommandHandler("unsubscribe", unsubscribe)],
         states={
             1: [MessageHandler(filters.Regex(NOT_CANCEL), unsubscribe_msg)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        conversation_timeout=300
+    )
+    app.add_handler(conv_handler)
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("set_host", set_host)],
+        states={
+            1: [MessageHandler(filters.Regex(NOT_CANCEL), set_host_msg)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         conversation_timeout=300
