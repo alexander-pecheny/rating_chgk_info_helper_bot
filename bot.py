@@ -440,7 +440,7 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
         old_diff = set(reqs) - set(new_reqs)
         tourn_to_reqs[(tourn_id, tourn_name)] = new_reqs
         if (new_diff or old_diff) and not chat_ids_whitelist:
-            logger.debug(f"adding request for updating data for tourn_id {tourn_id}")
+            logger.debug(f"adding request for updating data for tourn_id {tourn_id}: was {reqs}, became {new_reqs}")
             reqs_for_committing.append(
                 (
                     """update data set state = ? where id = ?""",
@@ -491,8 +491,12 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
     if not chat_ids_whitelist and reqs_for_committing:
         logger.debug("committing requests")
         for tup in reqs_for_committing:
-            cur.execute(*tup)
-            conn.commit()
+            try:
+                cur.execute(*tup)
+                conn.commit()
+            except Exception as e:
+                logger.debug(f"exception while trying to commit req {tup}: {type(e)} {e}")
+        logger.debug("end of committing requests")
 
 
 async def check_requests(context: CallbackContext):
