@@ -449,7 +449,7 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
             )
         if new_diff:
             logger.debug(
-                f"adding requests for sending messages for tourn_id {tourn_id}"
+                f"adding requests for sending messages for tourn_id {tourn_id} for chat_ids {','.join(str(x) for x in chat_ids)}"
             )
             text = (
                 f'Для турнира <b>{tourn_id} {tourn_name}</b> есть {len(new_reqs)} {get_req_form(len(new_reqs))}. <a href="https://{{host}}/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n'
@@ -461,6 +461,7 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
                 prefs = get_prefs(chat_id)
                 host = prefs.get("host") or "rating.chgk.info"
                 user_to_message[chat_id].append((tourn_id, text.format(host=host)))
+                logger.debug(f"added message for {chat_id} about {tourn_id}")
         if not chat_ids_whitelist and parse_dt(info["dateEnd"]) < now():
             logger.debug(f"adding request for removal of tourn_id {tourn_id}")
             reqs_for_committing.append(
@@ -469,6 +470,7 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
     for chat_id in user_to_message:
         if chat_ids_whitelist and chat_id not in chat_ids_whitelist:
             continue
+        logger.debug(f"processing messages to {chat_id}")
         tups = user_to_message[chat_id]
         texts = [x[1] for x in tups]
         tourn_ids = [x[0] for x in tups]
@@ -485,9 +487,10 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
                 )
         logger.debug(f"sending messages to {chat_id}")
         final_text = "\n\n".join(texts)
-        await context.application.bot.send_message(
-            chat_id, final_text, parse_mode=ParseMode.HTML
-        )
+        for batch in get_batches(final_text):
+            await context.application.bot.send_message(
+                chat_id, batch, parse_mode=ParseMode.HTML
+            )
     if not chat_ids_whitelist and reqs_for_committing:
         logger.debug("committing requests")
         for tup in reqs_for_committing:
@@ -553,6 +556,16 @@ async def run_check_requests_debug(update: Update, context: ContextTypes.DEFAULT
     context.application.job_queue.run_once(check_requests_debug, when=1)
 
 
+
+def get_batches(res):
+    batches = []
+    while len(res) >= 2048:
+        batch, res = res[:2047], res[2047:]
+        batches.append(batch)
+    batches.append(res)
+    return batches
+
+
 async def get_subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_chat.id not in ADMINS:
         await update.message.reply_text("Вы не админ бота.")
@@ -572,12 +585,7 @@ async def get_subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
     result.append(f"{len(result)} chats subscribed to {len(data)} unique tournaments")
     res = "\n".join(result)
-    batches = []
-    while len(res) >= 2048:
-        batch, res = res[:2047], res[2047:]
-        batches.append(batch)
-    batches.append(res)
-    for batch in batches:
+    for batch in get_batches(res):
         await update.message.reply_text(batch)
 
 
