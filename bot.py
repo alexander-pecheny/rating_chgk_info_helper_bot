@@ -462,7 +462,10 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
                 host = prefs.get("host") or "rating.chgk.info"
                 user_to_message[chat_id].append((tourn_id, text.format(host=host)))
                 logger.debug(f"added message for {chat_id} about {tourn_id}")
-        if not chat_ids_whitelist and parse_dt(info["dateEnd"]) < now():
+        if not chat_ids_whitelist and (
+            info.get("detail") == "Not found"
+            or (info.get("dateEnd") and parse_dt(info["dateEnd"]) < now())
+        ):
             logger.debug(f"adding request for removal of tourn_id {tourn_id}")
             reqs_for_committing.append(
                 ("""delete from data where id = ?""", (tourn_id,))
