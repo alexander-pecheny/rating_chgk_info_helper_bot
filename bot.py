@@ -567,7 +567,14 @@ async def get_subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"{i + 1}. {user} - {len(tourns)} tournaments ({', '.join(tourns)})"
         )
     result.append(f"{len(result)} chats subscribed to {len(data)} unique tournaments")
-    await update.message.reply_text("\n".join(result))
+    res = "\n".join(result)
+    batches = []
+    while len(res) >= 2048:
+        batch, res = res[:2047], res[2047:]
+        batches.append(batch)
+    batches.append(res)
+    for batch in batches:
+        await update.message.reply_text(batch)
 
 
 async def my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
