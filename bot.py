@@ -23,8 +23,10 @@ from telegram.ext import (
     CallbackContext,
     ConversationHandler,
     MessageHandler,
-    filters
+    filters,
 )
+
+from dateutil import generate_dates
 
 API = "https://api.rating.chgk.net"
 DIR = os.path.dirname(os.path.abspath(__file__))
@@ -73,7 +75,7 @@ class Formatter(logging.Formatter):
         return s
 
 
-log_suffix = '_debug' if 'token_path' in ' '.join(sys.argv) else ''
+log_suffix = "_debug" if "token_path" in " ".join(sys.argv) else ""
 formatter = Formatter("%(asctime)s %(message)s")
 fileHandler = logging.handlers.RotatingFileHandler(
     os.path.join(DIR, f"rating_bot{log_suffix}.log"), maxBytes=1024 * 1024 * 16
@@ -176,7 +178,9 @@ def get_req_form(x: int):
 def get_prefs(chat_id):
     conn = sqlite3.connect(DB_LOC)
     cur = conn.cursor()
-    prefs_list = cur.execute(f"""select chat_id, prefs from chat_prefs where chat_id = {chat_id}""").fetchall()
+    prefs_list = cur.execute(
+        f"""select chat_id, prefs from chat_prefs where chat_id = {chat_id}"""
+    ).fetchall()
     if prefs_list:
         return json.loads(prefs_list[0][1])
     return {}
@@ -258,7 +262,7 @@ def remove_from_subscribers(tourn_id, chat_id) -> str:
             return f"Вы теперь отписаны от турнира <b>{tourn_id} {name}</b>."
         else:
             return f"Вы и так не подписаны на турнир {tourn_id}."
-        
+
 
 def set_host_req(host: str, chat_id: int) -> str:
     conn = sqlite3.connect(DB_LOC)
@@ -274,16 +278,16 @@ def set_host_req(host: str, chat_id: int) -> str:
     if data:
         cur.execute(
             """update chat_prefs set prefs = ? where chat_id = ?""",
-            (json.dumps(prefs), chat_id)
+            (json.dumps(prefs), chat_id),
         )
     else:
         cur.execute(
             """insert into chat_prefs(chat_id,prefs) values (?,?)""",
-            (chat_id, json.dumps(prefs))
+            (chat_id, json.dumps(prefs)),
         )
     conn.commit()
     return f"Ваш хост теперь <pre>{host}</pre>."
-        
+
 
 async def subscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
@@ -295,9 +299,7 @@ async def subscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.reply_html("\n".join([x for x in msgs if x]))
         return -1
     else:
-        await update.message.reply_html(
-            ID_TOURNS_TEXT
-        )
+        await update.message.reply_html(ID_TOURNS_TEXT)
         return 1
 
 
@@ -311,11 +313,9 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_html("\n".join([x for x in msgs if x]))
         return -1
     else:
-        await update.message.reply_html(
-            ID_TOURNS_TEXT
-        )
+        await update.message.reply_html(ID_TOURNS_TEXT)
         return 1
-    
+
 
 async def unsubscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
@@ -327,9 +327,7 @@ async def unsubscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_html("\n".join([x for x in msgs if x]))
         return -1
     else:
-        await update.message.reply_html(
-            ID_TOURNS_TEXT
-        )
+        await update.message.reply_html(ID_TOURNS_TEXT)
         return 1
 
 
@@ -343,18 +341,18 @@ async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_html("\n".join([x for x in msgs if x]))
         return -1
     else:
-        await update.message.reply_text(
-           ID_TOURNS_TEXT
-        )
+        await update.message.reply_text(ID_TOURNS_TEXT)
         return 1
-    
+
+
 RE_HOST = re.compile("[a-z][a-z\\.]+[a-z]")
-    
+
+
 def strip_host(host):
     host = (host or "").strip()
     for prefix in ("http://", "https://", "www."):
         if host.startswith(prefix):
-            host = host[len(prefix):]
+            host = host[len(prefix) :]
     host = urllib.parse.urlparse("https://" + host).netloc
     return host
 
@@ -362,7 +360,6 @@ def strip_host(host):
 def validate_host(host):
     return host and RE_HOST.search(host) and "." in host
 
-    
 
 async def set_host(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text[len("/set_host") :]
@@ -370,18 +367,21 @@ async def set_host(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msgs = []
     if not host:
         await update.message.reply_html(
-           "Введите новый хост (например, <pre>rating.chgk.info</pre> или <pre>rating.pecheny.me</pre>)"
+            "Введите новый хост (например, <pre>rating.chgk.info</pre> или <pre>rating.pecheny.me</pre>)"
         )
         return 1
     elif validate_host(host):
         msgs.append(set_host_req(host, update.effective_chat.id))
     else:
-        await update.message.reply_html("Не удалось распарсить хост, попробуйте ещё раз")
+        await update.message.reply_html(
+            "Не удалось распарсить хост, попробуйте ещё раз"
+        )
         return 1
     if msgs:
         await update.message.reply_html("\n".join([x for x in msgs if x]))
     return -1
-    
+
+
 async def set_host_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
     host = strip_host(text)
@@ -389,7 +389,9 @@ async def set_host_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if validate_host(host):
         msgs.append(set_host_req(host, update.effective_chat.id))
     else:
-        await update.message.reply_html("Не удалось распарсить хост, попробуйте ещё раз")
+        await update.message.reply_html(
+            "Не удалось распарсить хост, попробуйте ещё раз"
+        )
         return 1
     if msgs:
         await update.message.reply_html("\n".join([x for x in msgs if x]))
@@ -440,7 +442,9 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
         old_diff = set(reqs) - set(new_reqs)
         tourn_to_reqs[(tourn_id, tourn_name)] = new_reqs
         if (new_diff or old_diff) and not chat_ids_whitelist:
-            logger.debug(f"adding request for updating data for tourn_id {tourn_id}: was {reqs}, became {new_reqs}")
+            logger.debug(
+                f"adding request for updating data for tourn_id {tourn_id}: was {reqs}, became {new_reqs}"
+            )
             reqs_for_committing.append(
                 (
                     """update data set state = ? where id = ?""",
@@ -477,7 +481,9 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
         tups = user_to_message[chat_id]
         texts = [x[1] for x in tups]
         tourn_ids = [x[0] for x in tups]
-        other_subscribed_tourns = [t for t in user_to_subscriptions[chat_id] if t[0] not in tourn_ids]
+        other_subscribed_tourns = [
+            t for t in user_to_subscriptions[chat_id] if t[0] not in tourn_ids
+        ]
         prefs = get_prefs(chat_id)
         host = prefs.get("host") or "rating.chgk.info"
         for t in sorted(other_subscribed_tourns):
@@ -501,12 +507,15 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
                 cur.execute(*tup)
                 conn.commit()
             except Exception as e:
-                logger.debug(f"exception while trying to commit req {tup}: {type(e)} {e}")
+                logger.debug(
+                    f"exception while trying to commit req {tup}: {type(e)} {e}"
+                )
         logger.debug("end of committing requests")
 
 
 async def check_requests(context: CallbackContext):
     await _check_requests(context=context)
+
 
 async def check_requests_debug(context: CallbackContext):
     await _check_requests(context=context, chat_ids_whitelist=ADMINS)
@@ -543,7 +552,9 @@ async def log_tail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("\n".join(cnt[-25:]))
 
 
-async def run_check_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def run_check_requests(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     if update.effective_chat.id not in ADMINS:
         await update.message.reply_text("Вы не админ бота.")
         return
@@ -551,13 +562,14 @@ async def run_check_requests(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.application.job_queue.run_once(check_requests, when=1)
 
 
-async def run_check_requests_debug(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def run_check_requests_debug(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     if update.effective_chat.id not in ADMINS:
         await update.message.reply_text("Вы не админ бота.")
         return
     await update.message.reply_text("running regular job in debug mode..")
     context.application.job_queue.run_once(check_requests_debug, when=1)
-
 
 
 def get_batches(res):
@@ -613,6 +625,70 @@ async def my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("Сейчас вы не подписаны ни на один турнир.")
 
 
+async def get_dates_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_html(
+        "Введите дату либо дату и время (UTC+3) начала синхрона в формате: <pre>2023-01-31</pre> либо <pre>2023-01-31 11:00</pre>"
+    )
+    return 1
+
+
+async def get_dates_enter_date(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    try:
+        text = update.message.text.strip()
+        if " " in text:
+            dt = datetime.datetime.strptime(text, "%Y-%m-%d %H:%M")
+        else:
+            dt = datetime.datetime.strptime(text + " 11:00", "%Y-%m-%d %H:%M")
+        context.user_data["date_sync_start"] = dt
+        await update.message.reply_html("Сколько дней от 1 до 7 будет длиться синхрон?")
+        return 2
+    except:
+        await update.message.reply_html(
+            "Неверный формат. Введите дату либо дату и время (UTC+3) начала синхрона в формате: <pre>2023-01-31</pre> либо <pre>2023-01-31 11:00</pre>"
+        )
+        return 1
+
+
+async def get_dates_enter_sync_days(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    try:
+        text = update.message.text.strip()
+        days = tryint(text)
+        if days:
+            context.user_data["date_sync_days"] = days
+            await update.message.reply_html(
+                "Сколько дней будет длиться асинхрон? Если не хотите асинхрон, напишите 0"
+            )
+            return 3
+        else:
+            await update.message.reply_html(
+                "Неверный формат. Введите количество дней от 1 до 7"
+            )
+            return 2
+    except:
+        await update.message.reply_html(
+            "Неверный формат. Введите количество дней от 1 до 7"
+        )
+        return 2
+
+
+async def get_dates_enter_async_days(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    text = update.message.text.strip()
+    async_days = tryint(text) or 0
+    date_sync_start = context.user_data["date_sync_start"]
+    date_sync_days = context.user_data["date_sync_days"]
+    dates = generate_dates(
+        date_sync_start, date_sync_days, async_days
+    )
+    await update.message.reply_html(dates)
+    return -1
+
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Cancels and ends the conversation."""
     await update.message.reply_text("Команда отменена.")
@@ -659,11 +735,10 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("subscribe", subscribe)],
         states={
-            1: [
-                MessageHandler(filters.Regex(NOT_CANCEL), subscribe_msg)],
+            1: [MessageHandler(filters.Regex(NOT_CANCEL), subscribe_msg)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
-        conversation_timeout=300
+        conversation_timeout=300,
     )
     app.add_handler(conv_handler)
     conv_handler = ConversationHandler(
@@ -672,7 +747,7 @@ def main():
             1: [MessageHandler(filters.Regex(NOT_CANCEL), unsubscribe_msg)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
-        conversation_timeout=300
+        conversation_timeout=300,
     )
     app.add_handler(conv_handler)
     conv_handler = ConversationHandler(
@@ -681,17 +756,30 @@ def main():
             1: [MessageHandler(filters.Regex(NOT_CANCEL), set_host_msg)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
-        conversation_timeout=300
+        conversation_timeout=300,
     )
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("my_subscriptions", my_subscriptions))
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("get_dates", get_dates_entry)],
+        states={
+            1: [MessageHandler(filters.Regex(NOT_CANCEL), get_dates_enter_date)],
+            2: [MessageHandler(filters.Regex(NOT_CANCEL), get_dates_enter_sync_days)],
+            3: [MessageHandler(filters.Regex(NOT_CANCEL), get_dates_enter_async_days)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        conversation_timeout=300,
+    )
+    app.add_handler(conv_handler)
 
     #  admin commands below
     app.add_handler(CommandHandler("debug_info", debug_info))
     app.add_handler(CommandHandler("log_tail", log_tail))
     app.add_handler(CommandHandler("get_subscribers", get_subscribers))
     app.add_handler(CommandHandler("run_check_requests", run_check_requests))
-    app.add_handler(CommandHandler("run_check_requests_debug", run_check_requests_debug))
+    app.add_handler(
+        CommandHandler("run_check_requests_debug", run_check_requests_debug)
+    )
     if args.debug:
         app.add_handler(CommandHandler("echo_md", echo_md))
         app.add_handler(CommandHandler("echo_html", echo_html))
