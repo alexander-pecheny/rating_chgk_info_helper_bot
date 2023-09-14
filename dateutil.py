@@ -214,22 +214,28 @@ class TournamentData:
     resultFixesTo: Optional[DT] = None
 
 
+def wrap_date(name, date):
+    return f"{name}: <pre>{date.dt_plain()}</pre>"
+
+
 def format_dates(sync_data: TournamentData) -> str:
     result = []
-    result.append(f"Начало: {sync_data.dateStart.dt_plain()}")
-    result.append(f"Конец: {sync_data.dateEnd.dt_plain()}")
-    result.append(f"Приём заявок до: {sync_data.dateRequestsAllowedTo.dt_plain()}")
+    result.append(wrap_date("Начало", sync_data.dateStart))
+    result.append(wrap_date("Конец", sync_data.dateEnd))
+    result.append(wrap_date("Приём заявок до", sync_data.dateRequestsAllowedTo))
     result.append(
-        f"Скачивание пакетов ведущими с: {sync_data.dateDownloadQuestionsFrom.dt_plain()}"
+        wrap_date("Скачивание пакетов ведущими с", sync_data.dateDownloadQuestionsFrom)
     )
     result.append(
-        f"Приём составов команд и результатов до: {sync_data.resultsRecapsTo.dt_plain()}"
+        wrap_date("Приём составов команд и результатов до", sync_data.resultsRecapsTo)
     )
-    result.append(f"Результаты скрыты до: {sync_data.hideResultsTo.dt_plain()}")
-    result.append(f"Срок незасветки пакета до: {sync_data.hideQuestionsTo.dt_plain()}")
-    result.append(f"Приём апелляций до: {sync_data.dateAppealAllowedTo.dt_plain()}")
+    result.append(wrap_date("Результаты скрыты до", sync_data.hideResultsTo))
+    result.append(wrap_date("Срок незасветки пакета до", sync_data.hideQuestionsTo))
+    result.append(wrap_date("Приём апелляций до", sync_data.dateAppealAllowedTo))
     result.append(
-        f"Корректировка результатов представителями до: {sync_data.resultFixesTo.dt_plain()}"
+        wrap_date(
+            "Корректировка результатов представителями до", sync_data.resultFixesTo
+        )
     )
     return result
 
@@ -272,7 +278,7 @@ def generate_dates(
     synch.resultFixesTo = synch.dateEnd.plus_days(19)
     if async_days:
         asynch = TournamentData()
-        asynch.dateStart = synch.dateEnd.plus_days(1).replace(hour=0, minute=1)
+        asynch.dateStart = synch.dateEnd.plus_minutes(2)
         asynch.dateEnd = asynch.dateStart.plus_days(async_days)
         asynch.dateRequestsAllowedTo = asynch.dateEnd
         asynch.dateDownloadQuestionsFrom = asynch.dateStart.plus_days(-1)
