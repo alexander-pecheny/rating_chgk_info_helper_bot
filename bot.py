@@ -26,7 +26,7 @@ from telegram.ext import (
     filters,
 )
 
-from dateutil import generate_dates
+from dateutil import generate_dates, DatesPrefs, tryint, parse_dt_prefs
 
 API = "https://api.rating.chgk.net"
 DIR = os.path.dirname(os.path.abspath(__file__))
@@ -143,14 +143,6 @@ def get_info(t_id):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_markdown(START)
-
-
-def tryint(s):
-    try:
-        return int(s)
-    except Exception as e:
-        sys.stderr.write(f"couldn't convert {s} to int: {type(e)} {e}\n")
-        return
 
 
 def parse_chat_ids(chat_ids_str: str) -> list[int]:
@@ -287,6 +279,54 @@ def set_host_req(host: str, chat_id: int) -> str:
         )
     conn.commit()
     return f"Ваш хост теперь <pre>{host}</pre>."
+
+
+def set_dates_prefs_req(dates_update: str, chat_id: int) -> str:
+    conn = sqlite3.connect(DB_LOC)
+    cur = conn.cursor()
+    data = cur.execute(
+        f"""select chat_id, prefs from chat_prefs where chat_id = {chat_id}"""
+    ).fetchall()
+    if data:
+        prefs = json.loads(data[0][1])
+    else:
+        prefs = {}
+    curr_dates = DatesPrefs()
+    curr_dates.update_from_dict(prefs.get("dates") or {})
+    curr_dates.update_from_str(dates_update)
+    prefs["dates"] = curr_dates.json()
+    if data:
+        cur.execute(
+            """update chat_prefs set prefs = ? where chat_id = ?""",
+            (json.dumps(prefs), chat_id),
+        )
+    else:
+        cur.execute(
+            """insert into chat_prefs(chat_id,prefs) values (?,?)""",
+            (chat_id, json.dumps(prefs)),
+        )
+    conn.commit()
+    return f"Ваши настройки дат теперь: {curr_dates.hr()}."
+
+
+def _get_dates_prefs_req(chat_id: int) -> DatesPrefs:
+    conn = sqlite3.connect(DB_LOC)
+    cur = conn.cursor()
+    data = cur.execute(
+        f"""select chat_id, prefs from chat_prefs where chat_id = {chat_id}"""
+    ).fetchall()
+    if data:
+        prefs = json.loads(data[0][1])
+    else:
+        prefs = {}
+    curr_dates = DatesPrefs()
+    curr_dates.update_from_dict(prefs.get("dates") or {})
+    return curr_dates
+
+
+def get_dates_prefs_req(chat_id: int) -> str:
+    curr_dates = _get_dates_prefs_req(chat_id)
+    return f"Ваши настройки дат: {curr_dates.hr()}."
 
 
 async def subscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -637,11 +677,8 @@ async def get_dates_enter_date(
 ) -> None:
     try:
         text = update.message.text.strip()
-        if " " in text:
-            dt = datetime.datetime.strptime(text, "%Y-%m-%d %H:%M")
-        else:
-            dt = datetime.datetime.strptime(text + " 11:00", "%Y-%m-%d %H:%M")
-        context.user_data["date_sync_start"] = dt
+        _ = parse_dt_prefs(text)
+        context.user_data["date_sync_start"] = text
         await update.message.reply_html("Сколько дней от 1 до 7 будет длиться синхрон?")
         return 2
     except:
@@ -682,10 +719,33 @@ async def get_dates_enter_async_days(
     async_days = tryint(text) or 0
     date_sync_start = context.user_data["date_sync_start"]
     date_sync_days = context.user_data["date_sync_days"]
+    prefs = _get_dates_prefs_req(chat_id=update.effective_chat.id)
     dates = generate_dates(
-        date_sync_start, date_sync_days, async_days
+        date_sync_start, date_sync_days, async_days, prefs
     )
     await update.message.reply_html(dates)
+    return -1
+
+
+async def get_dates_prefs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    prefs = get_dates_prefs_req(update.effective_chat.id)
+    await update.message.reply_html(prefs)
+
+async def set_dates_prefs_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = update.message.text[len("/set_dates_prefs ") :]
+    if text:
+        reply = set_dates_prefs_req(dates_update=text, chat_id=update.effective_chat.id)
+        await update.message.reply_html(reply)
+        return -1
+    else:
+        reply = get_dates_prefs_req(update.effective_chat.id) + "\n\nВведите новые настройки:"
+        await update.message.reply_html(reply)
+        return 1
+    
+async def set_dates_prefs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = update.message.text
+    reply = set_dates_prefs_req(dates_update=text, chat_id=update.effective_chat.id)
+    await update.message.reply_html(reply)
     return -1
 
 
@@ -771,6 +831,16 @@ def main():
         conversation_timeout=300,
     )
     app.add_handler(conv_handler)
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("set_dates_prefs", set_dates_prefs_entry)],
+        states={
+            1: [MessageHandler(filters.Regex(NOT_CANCEL), set_dates_prefs)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        conversation_timeout=300,
+    )
+    app.add_handler(conv_handler)
+    app.add_handler(CommandHandler("get_dates_prefs", get_dates_prefs))
 
     #  admin commands below
     app.add_handler(CommandHandler("debug_info", debug_info))

@@ -1,6 +1,16 @@
-from typing import Optional
-from dataclasses import dataclass
+from typing import Optional, Self
 import datetime
+import json
+import sys
+from dataclasses import dataclass
+
+
+def tryint(s):
+    try:
+        return int(s)
+    except Exception as e:
+        sys.stderr.write(f"couldn't convert {s} to int: {type(e)} {e}\n")
+        return
 
 
 class DT:
@@ -240,45 +250,109 @@ def format_dates(sync_data: TournamentData) -> str:
     return result
 
 
+@dataclass
+class DatesPrefs:
+    time: Optional[tuple[int, int]] = None
+    results_recaps_to: Optional[int] = None
+    appeals_to: Optional[int] = None
+    results_fixes_to: Optional[int] = None
+
+    def json(self) -> dict:
+        return {"time": self.time, "results_recaps_to": self.results_recaps_to, "appeals_to": self.appeals_to, "results_fixes_to": self.results_fixes_to}
+    
+    def hr(self) -> str:
+        result = []
+        time = self.get_or_default("time")
+        result.append(f"время: {str(time[0]).zfill(2)}:{str(time[1]).zfill(2)}")
+        results_recaps_to = self.get_or_default("results_recaps_to")
+        result.append(f"составы/результаты: {results_recaps_to} дней от конца турнира")
+        appeals_to = self.get_or_default("appeals_to")
+        result.append(f"апелляции: {appeals_to} дней от конца турнира")
+        results_fixes_to = self.get_or_default("results_fixes_to")
+        result.append(f"корректировка: {results_fixes_to} дней от конца турнира")
+        return "\n".join(result)
+
+    def get_or_default(self, attr):
+        return getattr(self, attr) or getattr(self.default(), attr)
+
+    def __repr__(self) -> str:
+        return f"DatesPrefs({json.dumps(self.json())})"
+
+    @classmethod
+    def default(cls) -> Self:
+        return cls(time=(19, 0), results_recaps_to=3, appeals_to=8, results_fixes_to=16)
+    
+    @staticmethod
+    def parse_time(tm) -> Optional[tuple[int, int]]:
+        if ":" not in tm:
+            int_tm = tryint(tm)
+            if int_tm:
+                return (int_tm, 0)
+        hour, minute = tm.split(":", 1)
+        hour = tryint(hour)
+        minute = tryint(minute)
+        if hour is None or minute is None:
+            return
+        return (hour, minute)
+    
+    def update_from_str(self, string):
+        sp = string.strip().split(",")
+        for element in sp:
+            if ":" not in element:
+                continue
+            k, v = element.split(":", 1)
+            k = k.strip().lower()
+            v = v.strip().lower()
+            if k == "время":
+                self.time = self.parse_time(v)
+            elif k in ("составы", "результаты"):
+                self.results_recaps_to = tryint(v)
+            elif k == "апелляции":
+                self.appeals_to = tryint(v)
+            elif k == "корректировка":
+                self.results_fixes_to = tryint(v)
+
+    def update_from_dict(self, dict_: dict):
+        for k, v in dict_.items():
+            if k in (
+                "time",
+                "results_recaps_to",
+                "appeals_to",
+                "results_fixes_to",
+            ):
+                setattr(self, k, v)
+
+
 StrOrDate = str | datetime.datetime
 
 
-def generate_dates(
-    datetime_sync_start: StrOrDate, sync_days: int, async_days: int
-) -> str:
-    try:
-        if isinstance(datetime_sync_start, datetime.datetime):
-            dt_sync_start = datetime_sync_start
-        elif " " in datetime_sync_start:
-            dt_sync_start = datetime.datetime.strptime(
-                datetime_sync_start, "%Y-%m-%d %H:%M"
-            )
-        else:
-            dt_sync_start = datetime.datetime.strptime(
-                datetime_sync_start + " 11:00", "%Y-%m-%d %H:%M"
-            )
-    except:
-        return "Не удалось распарсить дату. Правильный формат: <pre>2023-01-31</pre> или <pre>2023-01-31 11:00</pre>"
-    if sync_days < 1 or sync_days > 7:
-        return "Дней синхрона должно быть от 1 до 7"
-    synch = TournamentData()
-    synch.dateStart = DT(dt_sync_start)
-    if (
-        synch.dateStart.dt.hour == 11
-        and synch.dateStart.dt.minute == 0
-        and sync_days == 7
-    ):
-        synch.dateEnd = synch.dateStart.plus_days(6).replace(hour=23, minute=59)
+def parse_dt_prefs(datetime_sync_start: str, prefs: DatesPrefs = None) -> datetime.datetime:
+    datetime_sync_start = datetime_sync_start.strip()
+    if ":" in datetime_sync_start:
+        return datetime.datetime.strptime(datetime_sync_start, "%Y-%m-%d %H:%M")
     else:
-        synch.dateEnd = synch.dateStart.plus_days(sync_days)
+        date_ = datetime.datetime.strptime(datetime_sync_start, "%Y-%m-%d")
+        if prefs:
+            hour, minute = prefs.get_or_default("time")
+            date_ = date_.replace(hour=hour, minute=minute)
+        return date_
+
+
+def generate_dates(
+    datetime_sync_start: StrOrDate, sync_days: int, async_days: int, prefs: DatesPrefs
+) -> str:
+    datetime_sync_start_dt = parse_dt_prefs(datetime_sync_start, prefs)
+    synch = TournamentData()
+    synch.dateStart = DT(datetime_sync_start_dt)
+    synch.dateEnd = synch.dateStart.plus_days(sync_days)
     synch.dateRequestsAllowedTo = synch.dateEnd
     synch.dateDownloadQuestionsFrom = synch.dateStart.plus_days(-1)
-    synch.resultsRecapsTo = synch.dateEnd.plus_days(3)
-    synch.dateAppealAllowedTo = synch.dateEnd.plus_days(9)
-    synch.resultFixesTo = synch.dateEnd.plus_days(19)
+    synch.resultsRecapsTo = synch.dateEnd.plus_days(prefs.get_or_default("results_recaps_to"))
+    synch.dateAppealAllowedTo = synch.dateEnd.plus_days(prefs.get_or_default("appeals_to"))
+    synch.resultFixesTo = synch.dateEnd.plus_days(prefs.get_or_default("results_fixes_to"))
     if async_days:
         asynch = TournamentData()
-        asynch.dateStart = synch.dateEnd.plus_minutes(2)
+        asynch.dateStart = synch.dateEnd.plus_hours(3)
         asynch.dateEnd = asynch.dateStart.plus_days(async_days)
         asynch.dateRequestsAllowedTo = asynch.dateEnd
         asynch.dateDownloadQuestionsFrom = asynch.dateStart.plus_days(-1)
