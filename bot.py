@@ -121,6 +121,13 @@ def convert_request_info(request):
     }
 
 
+async def try_send_message(context, *args, **kwargs):
+    try:
+        await context.application.bot.send_message(*args, **kwargs)
+    except Exception as e:
+        logger.error(f"exception {type(e)} {e} while trying to send message with args {args} {kwargs}")
+
+
 def get_requests(t_id, only_new=True):
     logger.debug(f"getting requests from {t_id}...")
     req = httpx.get(f"{API}/tournaments/{t_id}/requests.json?pagination=false")
@@ -537,8 +544,8 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
         logger.debug(f"sending messages to {chat_id}")
         final_text = "\n\n".join(texts)
         for batch in get_batches(final_text):
-            await context.application.bot.send_message(
-                chat_id, batch, parse_mode=ParseMode.HTML
+            await try_send_message(
+                context, chat_id, batch, parse_mode=ParseMode.HTML
             )
     if not chat_ids_whitelist and reqs_for_committing:
         logger.debug("committing requests")
@@ -551,6 +558,11 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
                     f"exception while trying to commit req {tup}: {type(e)} {e}"
                 )
         logger.debug("end of committing requests")
+
+
+async def test_job(context: CallbackContext):
+    for chat_id in ADMINS:
+        await try_send_message(context, chat_id, "<b>test</b>", parse_mode=ParseMode.HTML)
 
 
 async def check_requests(context: CallbackContext):
@@ -610,6 +622,16 @@ async def run_check_requests_debug(
         return
     await update.message.reply_text("running regular job in debug mode..")
     context.application.job_queue.run_once(check_requests_debug, when=1)
+
+
+async def run_test_job(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if update.effective_chat.id not in ADMINS:
+        await update.message.reply_text("Вы не админ бота.")
+        return
+    await update.message.reply_text("running test job..")
+    context.application.job_queue.run_once(test_job, when=1)
 
 
 def get_batches(res):
@@ -849,6 +871,9 @@ def main():
     app.add_handler(CommandHandler("run_check_requests", run_check_requests))
     app.add_handler(
         CommandHandler("run_check_requests_debug", run_check_requests_debug)
+    )
+    app.add_handler(
+        CommandHandler("run_test_job", run_test_job)
     )
     if args.debug:
         app.add_handler(CommandHandler("echo_md", echo_md))
