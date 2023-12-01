@@ -1,32 +1,32 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-import os
-import re
 import argparse
 import datetime
+import itertools
 import json
 import logging
 import logging.handlers
-import time
+import os
+import re
 import sqlite3
 import sys
+import time
 import urllib
 from collections import defaultdict
 
 import httpx
+from dateutil import DatesPrefs, generate_dates, parse_dt_prefs, tryint
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder,
+    CallbackContext,
     CommandHandler,
     ContextTypes,
-    CallbackContext,
     ConversationHandler,
     MessageHandler,
     filters,
 )
-
-from dateutil import generate_dates, DatesPrefs, tryint, parse_dt_prefs
 
 API = "https://api.rating.chgk.net"
 DIR = os.path.dirname(os.path.abspath(__file__))
@@ -125,7 +125,9 @@ async def try_send_message(context, *args, **kwargs):
     try:
         await context.application.bot.send_message(*args, **kwargs)
     except Exception as e:
-        logger.error(f"exception {type(e)} {e} while trying to send message with args {args} {kwargs}")
+        logger.error(
+            f"exception {type(e)} {e} while trying to send message with args {args} {kwargs}"
+        )
 
 
 def get_requests(t_id, only_new=True):
@@ -336,9 +338,18 @@ def get_dates_prefs_req(chat_id: int) -> str:
     return f"Ваши настройки дат: {curr_dates.hr()}."
 
 
+def get_list_of_ints(str_):
+    sp1 = str_.split(",")
+    return [
+        tryint(x)
+        for x in itertools.chain.from_iterable(x.split() for x in sp1)
+        if tryint(x)
+    ]
+
+
 async def subscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
-    tourn_ids = [tryint(s.strip()) for s in text.split(",") if tryint(s.strip())]
+    tourn_ids = get_list_of_ints(text)
     msgs = []
     for id_ in tourn_ids:
         msgs.append(add_to_subscribers(id_, update.effective_chat.id))
@@ -352,7 +363,7 @@ async def subscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text[len("/subscribe") :]
-    tourn_ids = [tryint(s.strip()) for s in text.split(",") if tryint(s.strip())]
+    tourn_ids = get_list_of_ints(text)
     msgs = []
     for id_ in tourn_ids:
         msgs.append(add_to_subscribers(id_, update.effective_chat.id))
@@ -366,7 +377,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def unsubscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
-    tourn_ids = [tryint(s.strip()) for s in text.split(",") if tryint(s.strip())]
+    tourn_ids = get_list_of_ints(text)
     msgs = []
     for id_ in tourn_ids:
         msgs.append(remove_from_subscribers(id_, update.effective_chat.id))
@@ -380,7 +391,7 @@ async def unsubscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text[len("/unsubscribe") :]
-    tourn_ids = [tryint(s.strip()) for s in text.split(",") if tryint(s.strip())]
+    tourn_ids = get_list_of_ints(text)
     msgs = []
     for id_ in tourn_ids:
         msgs.append(remove_from_subscribers(id_, update.effective_chat.id))
@@ -544,9 +555,7 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
         logger.debug(f"sending messages to {chat_id}")
         final_text = "\n\n".join(texts)
         for batch in get_batches(final_text):
-            await try_send_message(
-                context, chat_id, batch, parse_mode=ParseMode.HTML
-            )
+            await try_send_message(context, chat_id, batch, parse_mode=ParseMode.HTML)
     if not chat_ids_whitelist and reqs_for_committing:
         logger.debug("committing requests")
         for tup in reqs_for_committing:
@@ -562,7 +571,9 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
 
 async def test_job(context: CallbackContext):
     for chat_id in ADMINS:
-        await try_send_message(context, chat_id, "<b>test</b>", parse_mode=ParseMode.HTML)
+        await try_send_message(
+            context, chat_id, "<b>test</b>", parse_mode=ParseMode.HTML
+        )
 
 
 async def check_requests(context: CallbackContext):
@@ -624,9 +635,7 @@ async def run_check_requests_debug(
     context.application.job_queue.run_once(check_requests_debug, when=1)
 
 
-async def run_test_job(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def run_test_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_chat.id not in ADMINS:
         await update.message.reply_text("Вы не админ бота.")
         return
@@ -742,9 +751,7 @@ async def get_dates_enter_async_days(
     date_sync_start = context.user_data["date_sync_start"]
     date_sync_days = context.user_data["date_sync_days"]
     prefs = _get_dates_prefs_req(chat_id=update.effective_chat.id)
-    dates = generate_dates(
-        date_sync_start, date_sync_days, async_days, prefs
-    )
+    dates = generate_dates(date_sync_start, date_sync_days, async_days, prefs)
     await update.message.reply_html(dates)
     return -1
 
@@ -753,17 +760,24 @@ async def get_dates_prefs(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     prefs = get_dates_prefs_req(update.effective_chat.id)
     await update.message.reply_html(prefs)
 
-async def set_dates_prefs_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+async def set_dates_prefs_entry(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     text = update.message.text[len("/set_dates_prefs ") :]
     if text:
         reply = set_dates_prefs_req(dates_update=text, chat_id=update.effective_chat.id)
         await update.message.reply_html(reply)
         return -1
     else:
-        reply = get_dates_prefs_req(update.effective_chat.id) + "\n\nВведите новые настройки:"
+        reply = (
+            get_dates_prefs_req(update.effective_chat.id)
+            + "\n\nВведите новые настройки:"
+        )
         await update.message.reply_html(reply)
         return 1
-    
+
+
 async def set_dates_prefs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text
     reply = set_dates_prefs_req(dates_update=text, chat_id=update.effective_chat.id)
@@ -872,9 +886,7 @@ def main():
     app.add_handler(
         CommandHandler("run_check_requests_debug", run_check_requests_debug)
     )
-    app.add_handler(
-        CommandHandler("run_test_job", run_test_job)
-    )
+    app.add_handler(CommandHandler("run_test_job", run_test_job))
     if args.debug:
         app.add_handler(CommandHandler("echo_md", echo_md))
         app.add_handler(CommandHandler("echo_html", echo_html))
