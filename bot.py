@@ -16,6 +16,7 @@ from collections import defaultdict
 
 import httpx
 from dateutil import DatesPrefs, generate_dates, parse_dt_prefs, tryint
+from ratingutil import get_tourn_top3
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -56,6 +57,7 @@ START = """\
 Чтобы отписаться, то же самое, но с командой `/unsubscribe`.
 """
 ID_TOURNS_TEXT = "Пожалуйста, укажите id турниров через запятую или /cancel для отмены."
+ID_TOURN_TEXT = "Пожалуйста, укажите id турнира или /cancel для отмены."
 NOT_CANCEL = "^(?!/cancel)"
 UTC_PLUS_3 = datetime.timezone(datetime.timedelta(seconds=10800))
 ADMINS = []
@@ -372,6 +374,28 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return -1
     else:
         await update.message.reply_html(ID_TOURNS_TEXT)
+        return 1
+
+
+async def get_top3_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text
+    tourn_ids = get_list_of_ints(text)
+    if len(tourn_ids) == 1:
+        await update.message.reply_html(get_tourn_top3(tourn_ids[0]))
+        return -1
+    else:
+        await update.message.reply_html(ID_TOURN_TEXT)
+        return 1
+
+
+async def get_top3(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text[len("/get_top3") :]
+    tourn_ids = get_list_of_ints(text)
+    if len(tourn_ids) == 1:
+        await update.message.reply_html(get_tourn_top3(tourn_ids[0]))
+        return -1
+    else:
+        await update.message.reply_html(ID_TOURN_TEXT)
         return 1
 
 
@@ -841,6 +865,15 @@ def main():
         entry_points=[CommandHandler("unsubscribe", unsubscribe)],
         states={
             1: [MessageHandler(filters.Regex(NOT_CANCEL), unsubscribe_msg)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        conversation_timeout=300,
+    )
+    app.add_handler(conv_handler)
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("get_top3", get_top3)],
+        states={
+            1: [MessageHandler(filters.Regex(NOT_CANCEL), get_top3_msg)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         conversation_timeout=300,
