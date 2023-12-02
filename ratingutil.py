@@ -20,9 +20,9 @@ def get_recaps(res):
 
 def get_top3_by_flag(results, flag=None):
     teams = []
+    if flag:
+        results = [r for r in results if flag in {x["shortName"] for x in r["flags"]}]
     for i, res in enumerate(results):
-        if flag is not None and flag not in {x["shortName"] for x in res["flags"]}:
-            continue
         teams.append(res)
         if (
             len(teams) >= 3
