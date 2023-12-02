@@ -54,7 +54,10 @@ def get_flags(results):
 
 def get_tourn_top3(tourn_id: int) -> str:
     results = httpx.get(API.format(tourn_id=tourn_id)).json()
-    results = sorted(results, key=lambda x: x["questionsTotal"], reverse=True)
+    try:
+        results = sorted(results, key=lambda x: x["questionsTotal"], reverse=True)
+    except TypeError:
+        return "Результаты пока недоступны или доступны не полностью."
     flags = get_flags(results)
     result = ["<b>Топ-3 в общем зачёте</b>", get_top3_by_flag(results)]
     for flag in sorted(flags):
