@@ -20,14 +20,16 @@ def get_recaps(res):
 
 def get_top3_by_flag(results, flag=None):
     teams = []
-    prev = None
-    for res in results:
+    for i, res in enumerate(results):
         if flag is not None and flag not in {x["shortName"] for x in res["flags"]}:
             continue
         teams.append(res)
-        if len(teams) >= 3 and res["questionsTotal"] < prev["questionsTotal"]:
+        if (
+            len(teams) >= 3
+            and (i + 1) < len(results)
+            and results[i + 1]["questionsTotal"] < res["questionsTotal"]
+        ):
             break
-        prev = res
     pointslist = [x["questionsTotal"] for x in teams]
     result = []
     for t in teams:
