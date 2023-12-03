@@ -10,13 +10,11 @@ import os
 import re
 import sqlite3
 import sys
-import time
 import urllib
 from collections import defaultdict
 
-import httpx
-from dateutil import DatesPrefs, generate_dates, parse_dt_prefs, tryint
-from ratingutil import get_tourn_top3
+from dateutil import DatesPrefs, generate_dates, parse_dt_prefs, tryint, DT
+from ratingutil import get_tourn_top3, _get_requests, _get_info, tourn_info_to_reminders
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -61,6 +59,7 @@ ID_TOURN_TEXT = "Пожалуйста, укажите id турнира или /
 NOT_CANCEL = "^(?!/cancel)"
 UTC_PLUS_3 = datetime.timezone(datetime.timedelta(seconds=10800))
 ADMINS = []
+DEFAULT_HOST = "rating.chgk.info"
 
 
 class Formatter(logging.Formatter):
@@ -132,26 +131,6 @@ async def try_send_message(context, *args, **kwargs):
         )
 
 
-def get_requests(t_id, only_new=True):
-    logger.debug(f"getting requests from {t_id}...")
-    req = httpx.get(f"{API}/tournaments/{t_id}/requests.json?pagination=false")
-    time.sleep(0.5)
-    if req.status_code != 200:
-        sys.stderr.write(f"got response with error {req.status_code}: {req.text}\n")
-        return
-    obj = req.json()
-    converted = {str(r["id"]): convert_request_info(r) for r in obj}
-    if only_new:
-        converted = {k: v for k, v in converted.items() if v["status"] == "N"}
-    return converted
-
-
-def get_info(t_id):
-    req = httpx.get(f"{API}/tournaments/{t_id}.json")
-    time.sleep(0.5)
-    return req.json()
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_markdown(START)
 
@@ -196,10 +175,10 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
         f"""select id, name, state, chat_ids from data where id = {tourn_id}"""
     ).fetchall()
     prefs = get_prefs(chat_id)
-    host = prefs.get("host") or "rating.chgk.info"
+    host = prefs.get("host") or DEFAULT_HOST
     if not data:
-        reqs = get_requests(tourn_id)
-        info = get_info(tourn_id)
+        reqs = _get_requests(tourn_id)
+        info = _get_info(tourn_id)
         name = info["name"]
         logger.debug(
             f"adding tournament {tourn_id} to base, with chat {chat_id} as first subscriber"
@@ -511,15 +490,9 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
     user_to_message = defaultdict(list)
     tourn_to_reqs = {}
     user_to_subscriptions = defaultdict(list)
-    for rec in data:
-        tourn_id = rec[0]
-        tourn_name = rec[1]
-        reqs = json.loads(rec[2])
-        chat_ids = parse_chat_ids(rec[3])
-        for chat_id in chat_ids:
-            user_to_subscriptions[chat_id].append((tourn_id, tourn_name))
-        new_reqs = get_requests(tourn_id)
-        info = get_info(tourn_id)
+
+    def _check_requests_inner():
+        new_reqs = _get_requests(tourn_id)
         new_diff = set(new_reqs) - set(reqs)
         old_diff = set(reqs) - set(new_reqs)
         tourn_to_reqs[(tourn_id, tourn_name)] = new_reqs
@@ -545,13 +518,21 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
                 if chat_ids_whitelist and chat_id not in chat_ids_whitelist:
                     continue
                 prefs = get_prefs(chat_id)
-                host = prefs.get("host") or "rating.chgk.info"
+                host = prefs.get("host") or DEFAULT_HOST
                 user_to_message[chat_id].append((tourn_id, text.format(host=host)))
                 logger.debug(f"added message for {chat_id} about {tourn_id}")
-        if not chat_ids_whitelist and (
-            info.get("detail") == "Not found"
-            or (info.get("dateEnd") and parse_dt(info["dateEnd"]) < now())
-        ):
+
+    for rec in data:
+        tourn_id = rec[0]
+        tourn_name = rec[1]
+        reqs = json.loads(rec[2])
+        chat_ids = parse_chat_ids(rec[3])
+        for chat_id in chat_ids:
+            user_to_subscriptions[chat_id].append((tourn_id, tourn_name))
+        info = _get_info(tourn_id)
+        if DT(info["dateEnd"]) > DT(now()):
+            _check_requests_inner()
+        if not chat_ids_whitelist and (info.get("detail") == "Not found"):
             logger.debug(f"adding request for removal of tourn_id {tourn_id}")
             reqs_for_committing.append(
                 ("""delete from data where id = ?""", (tourn_id,))
@@ -567,7 +548,7 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
             t for t in user_to_subscriptions[chat_id] if t[0] not in tourn_ids
         ]
         prefs = get_prefs(chat_id)
-        host = prefs.get("host") or "rating.chgk.info"
+        host = prefs.get("host") or DEFAULT_HOST
         for t in sorted(other_subscribed_tourns):
             tourn_id, tourn_name = t
             reqs = tourn_to_reqs[t]
@@ -602,6 +583,40 @@ async def test_job(context: CallbackContext):
 
 async def check_requests(context: CallbackContext):
     await _check_requests(context=context)
+
+
+async def make_reminders(context: CallbackContext):
+    logger.debug("running regular job...")
+    conn = sqlite3.connect(DB_LOC)
+    cur = conn.cursor()
+    data = cur.execute("""select id, name, state, chat_ids from data""").fetchall()
+    for x in data:
+        logger.debug(x)
+    reqs_for_committing = []
+    user_to_message = defaultdict(list)
+    for rec in data:
+        tourn_id = rec[0]
+        chat_ids = parse_chat_ids(rec[3])
+        info = _get_info(tourn_id)
+        if (DT(now()).dt - DT(info["dateEnd"]).dt).days >= 30:
+            logger.debug(f"adding request for removal of tourn_id {tourn_id}")
+            reqs_for_committing.append(
+                ("""delete from data where id = ?""", (tourn_id,))
+            )
+        reminders = tourn_info_to_reminders(info, DT(now()))
+        if reminders:
+            for chat_id in chat_ids:
+                user_to_message(chat_id).append(reminders)
+    logger.info(f"got messages for {len(user_to_message)} chats")
+    for chat_id in user_to_message:
+        logger.debug(f"processing messages to {chat_id}")
+        text = "\n\n".join(user_to_message[chat_id])
+        prefs = get_prefs(chat_id)
+        host = prefs.get("host") or DEFAULT_HOST
+        if host != DEFAULT_HOST:
+            text = text.replace(DEFAULT_HOST, host)
+        for batch in get_batches(text):
+            await try_send_message(context, chat_id, batch, parse_mode=ParseMode.HTML)
 
 
 async def check_requests_debug(context: CallbackContext):
@@ -647,6 +662,16 @@ async def run_check_requests(
         return
     await update.message.reply_text("running regular job..")
     context.application.job_queue.run_once(check_requests, when=1)
+
+
+async def run_make_reminders(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if update.effective_chat.id not in ADMINS:
+        await update.message.reply_text("Вы не админ бота.")
+        return
+    await update.message.reply_text("running regular job..")
+    context.application.job_queue.run_once(make_reminders, when=1)
 
 
 async def run_check_requests_debug(
@@ -816,6 +841,14 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+def get_next_reminder_job_time():
+    now = datetime.datetime.now(UTC_PLUS_3)
+    target = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    if target < now:
+        target += datetime.timedelta(days=1)
+    return target
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true")
@@ -850,6 +883,12 @@ def main():
             check_requests,
             datetime.timedelta(hours=2),
             first=first,
+        )
+        next_reminder_job_time = get_next_reminder_job_time()
+        app.job_queue.run_repeating(
+            make_reminders,
+            datetime.timedelta(hours=24),
+            first=next_reminder_job_time,
         )
     app.add_handler(CommandHandler("start", start))
     conv_handler = ConversationHandler(
@@ -916,6 +955,7 @@ def main():
     app.add_handler(CommandHandler("log_tail", log_tail))
     app.add_handler(CommandHandler("get_subscribers", get_subscribers))
     app.add_handler(CommandHandler("run_check_requests", run_check_requests))
+    app.add_handler(CommandHandler("run_make_reminders", run_make_reminders))
     app.add_handler(
         CommandHandler("run_check_requests_debug", run_check_requests_debug)
     )

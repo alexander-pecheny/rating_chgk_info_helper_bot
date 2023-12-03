@@ -258,8 +258,13 @@ class DatesPrefs:
     results_fixes_to: Optional[int] = None
 
     def json(self) -> dict:
-        return {"time": self.time, "results_recaps_to": self.results_recaps_to, "appeals_to": self.appeals_to, "results_fixes_to": self.results_fixes_to}
-    
+        return {
+            "time": self.time,
+            "results_recaps_to": self.results_recaps_to,
+            "appeals_to": self.appeals_to,
+            "results_fixes_to": self.results_fixes_to,
+        }
+
     def hr(self) -> str:
         result = []
         time = self.get_or_default("time")
@@ -281,7 +286,7 @@ class DatesPrefs:
     @classmethod
     def default(cls) -> Self:
         return cls(time=(19, 0), results_recaps_to=3, appeals_to=8, results_fixes_to=16)
-    
+
     @staticmethod
     def parse_time(tm) -> Optional[tuple[int, int]]:
         if ":" not in tm:
@@ -294,7 +299,7 @@ class DatesPrefs:
         if hour is None or minute is None:
             return
         return (hour, minute)
-    
+
     def update_from_str(self, string):
         sp = string.strip().split(",")
         for element in sp:
@@ -326,7 +331,9 @@ class DatesPrefs:
 StrOrDate = str | datetime.datetime
 
 
-def parse_dt_prefs(datetime_sync_start: str, prefs: DatesPrefs = None) -> datetime.datetime:
+def parse_dt_prefs(
+    datetime_sync_start: str, prefs: DatesPrefs = None
+) -> datetime.datetime:
     datetime_sync_start = datetime_sync_start.strip()
     if ":" in datetime_sync_start:
         return datetime.datetime.strptime(datetime_sync_start, "%Y-%m-%d %H:%M")
@@ -347,9 +354,15 @@ def generate_dates(
     synch.dateEnd = synch.dateStart.plus_days(sync_days)
     synch.dateRequestsAllowedTo = synch.dateEnd
     synch.dateDownloadQuestionsFrom = synch.dateStart.plus_days(-1)
-    synch.resultsRecapsTo = synch.dateEnd.plus_days(prefs.get_or_default("results_recaps_to"))
-    synch.dateAppealAllowedTo = synch.dateEnd.plus_days(prefs.get_or_default("appeals_to"))
-    synch.resultFixesTo = synch.dateEnd.plus_days(prefs.get_or_default("results_fixes_to"))
+    synch.resultsRecapsTo = synch.dateEnd.plus_days(
+        prefs.get_or_default("results_recaps_to")
+    )
+    synch.dateAppealAllowedTo = synch.dateEnd.plus_days(
+        prefs.get_or_default("appeals_to")
+    )
+    synch.resultFixesTo = synch.dateEnd.plus_days(
+        prefs.get_or_default("results_fixes_to")
+    )
     if async_days:
         asynch = TournamentData()
         asynch.dateStart = synch.dateEnd.plus_hours(3)
