@@ -1,6 +1,10 @@
 import httpx
+import logging
 import time
+import sys
 from dateutil import DT
+
+logger = logging.getLogger("rating_bot")
 
 API = "https://api.rating.chgk.net"
 
@@ -25,6 +29,29 @@ def _get_appeals(tourn_id):
 
 def _get_info(tourn_id):
     return httpx.get(f"{API}/tournaments/{tourn_id}.json").json()
+
+
+def convert_request_info(request):
+    rep = request["representative"]
+    town = request["venue"]["town"]["name"]
+    return {
+        "status": request["status"],
+        "rep": f"{rep['id']} {rep['name']} {rep['surname']} ({town})",
+    }
+
+
+def _get_requests(t_id, only_new=True):
+    logger.debug(f"getting requests from {t_id}...")
+    req = httpx.get(f"{API}/tournaments/{t_id}/requests.json?pagination=false")
+    time.sleep(0.5)
+    if req.status_code != 200:
+        sys.stderr.write(f"got response with error {req.status_code}: {req.text}\n")
+        return
+    obj = req.json()
+    converted = {str(r["id"]): convert_request_info(r) for r in obj}
+    if only_new:
+        converted = {k: v for k, v in converted.items() if v["status"] == "N"}
+    return converted
 
 
 def can_check_controversials(info, now):
