@@ -105,6 +105,11 @@ def parse_dt(dt):
     return datetime.datetime.strptime(dt, "%Y-%m-%dT%H:%M:%S%z")
 
 
+def info_is_bad(info):
+    detail = info.get("detail")
+    return (detail and detail.lower() == "not found")
+
+
 def db_init():
     if not os.path.isfile(DB_LOC):
         conn = sqlite3.connect(DB_LOC)
@@ -532,7 +537,7 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
         info = _get_info(tourn_id)
         if DT(info["dateEnd"]) > DT(now()):
             _check_requests_inner()
-        if not chat_ids_whitelist and (info.get("detail") == "Not found"):
+        if not chat_ids_whitelist and info_is_bad(info):
             logger.debug(f"adding request for removal of tourn_id {tourn_id}")
             reqs_for_committing.append(
                 ("""delete from data where id = ?""", (tourn_id,))
@@ -596,13 +601,21 @@ async def make_reminders(context: CallbackContext):
     user_to_message = defaultdict(list)
     for rec in data:
         tourn_id = rec[0]
+        logger.info(f"processing tournament {tourn_id}...")
         chat_ids = parse_chat_ids(rec[3])
         info = _get_info(tourn_id)
+        if info_is_bad(info):
+            logger.debug(f"adding request for removal of tourn_id {tourn_id}")
+            reqs_for_committing.append(
+                ("""delete from data where id = ?""", (tourn_id,))
+            )
+            continue
         if (DT(now()).dt - DT(info["dateEnd"]).dt).days >= 30:
             logger.debug(f"adding request for removal of tourn_id {tourn_id}")
             reqs_for_committing.append(
                 ("""delete from data where id = ?""", (tourn_id,))
             )
+            continue
         reminders = tourn_info_to_reminders(info, DT(now()))
         if reminders:
             for chat_id in chat_ids:
@@ -617,6 +630,17 @@ async def make_reminders(context: CallbackContext):
             text = text.replace(DEFAULT_HOST, host)
         for batch in get_batches(text):
             await try_send_message(context, chat_id, batch, parse_mode=ParseMode.HTML)
+    if reqs_for_committing:
+        logger.debug("committing requests")
+        for tup in reqs_for_committing:
+            try:
+                cur.execute(*tup)
+                conn.commit()
+            except Exception as e:
+                logger.debug(
+                    f"exception while trying to commit req {tup}: {type(e)} {e}"
+                )
+        logger.debug("end of committing requests")
 
 
 async def check_requests_debug(context: CallbackContext):
