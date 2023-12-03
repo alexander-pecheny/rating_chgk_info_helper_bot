@@ -66,7 +66,7 @@ def generate_init_message(info, end_date):
 
 def generate_controversials_reminder(info, now):
     tourn_name = f"<b>{info['id']} {info['name']}</b>"
-    return f"""Спорные на турнире {tourn_name} должны быть <a href="https://rating.chgk.info/{info['id']}/controversials">рассмотрены</a> до конца сегодняшнего дня."""
+    return f"""Спорные на турнире {tourn_name} должны быть <a href="https://rating.chgk.info/{info['id']}/controversials">рассмотрены</a> до конца следующего дня."""
 
 
 def generate_controversials_reminder_exact(info, now):
@@ -83,7 +83,7 @@ def generate_controversials_reminder_exact(info, now):
 
 def generate_appeals_reminder(info, now):
     tourn_name = f"<b>{info['id']} {info['name']}</b>"
-    return f"""Апелляции на турнире {tourn_name} должны быть <a href="https://rating.chgk.info/{info['id']}/appeals">рассмотрены</a> до конца сегодняшнего дня."""
+    return f"""Апелляции на турнире {tourn_name} должны быть <a href="https://rating.chgk.info/{info['id']}/appeals">рассмотрены</a> до конца следующего дня."""
 
 
 def generate_appeals_reminder_exact(info, now):
@@ -103,18 +103,18 @@ def tourn_info_to_reminders(info, now: DT):
     if delta == 1:
         messages.append(generate_init_message(info, end_date))
     if can_check:
-        if delta >= 6:
+        if delta >= 5:
             controversials = generate_controversials_reminder_exact(info)
             if controversials:
                 messages.append(controversials)
-        if delta >= 16:
+        if delta >= 15:
             appeals = generate_appeals_reminder_exact(info["id"])
             if controversials:
                 messages.append(appeals)
     else:
-        if delta == 6:
+        if delta == 5:
             messages.append(generate_controversials_reminder(info, now))
-        elif delta == 16:
+        elif delta == 15:
             messages.append(generate_appeals_reminder(info, now))
     return "\n\n".join(messages)
 
