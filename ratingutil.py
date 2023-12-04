@@ -64,12 +64,12 @@ def generate_init_message(info, end_date):
     return f"Крайний срок рассмотрения спорных на турнире {tourn_name} — {end_date.plus_days(6)}, апелляций — {end_date.plus_days(16)}"
 
 
-def generate_controversials_reminder(info, now):
+def generate_controversials_reminder(info):
     tourn_name = f"<b>{info['id']} {info['name']}</b>"
     return f"""Спорные на турнире {tourn_name} должны быть <a href="https://rating.chgk.info/{info['id']}/controversials">рассмотрены</a> до конца следующего дня."""
 
 
-def generate_controversials_reminder_exact(info, now):
+def generate_controversials_reminder_exact(info):
     tourn_name = f"<b>{info['id']} {info['name']}</b>"
     new_controversials = 0
     results = _get_results(info["id"])
@@ -81,12 +81,12 @@ def generate_controversials_reminder_exact(info, now):
         return f"""На турнире {tourn_name} {new_controversials} нерассмотренных спорных. <a href="https://rating.chgk.info/{info['id']}/controversials">Рассмотреть</a>"""
 
 
-def generate_appeals_reminder(info, now):
+def generate_appeals_reminder(info):
     tourn_name = f"<b>{info['id']} {info['name']}</b>"
     return f"""Апелляции на турнире {tourn_name} должны быть <a href="https://rating.chgk.info/{info['id']}/appeals">рассмотрены</a> до конца следующего дня."""
 
 
-def generate_appeals_reminder_exact(info, now):
+def generate_appeals_reminder_exact(info):
     tourn_name = f"<b>{info['id']} {info['name']}</b>"
     appeals = _get_appeals(info["id"])
     new_appeals = len([a for a in appeals if a["status"] == "N"])
@@ -96,10 +96,10 @@ def generate_appeals_reminder_exact(info, now):
 
 def tourn_info_to_reminders(info, now: DT):
     curr_date = now.dt.date()
-    end_date = DT(info["dateEnd"]).dt.date()
+    end_date = DT(info["dateEnd"])
     can_check = can_check_controversials(info, now)
     messages = []
-    delta = (curr_date - end_date).days
+    delta = (curr_date - end_date.dt.date()).days
     if delta == 1:
         messages.append(generate_init_message(info, end_date))
     if can_check:
