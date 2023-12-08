@@ -107,7 +107,7 @@ def parse_dt(dt):
 
 def info_is_bad(info):
     detail = info.get("detail")
-    return (detail and detail.lower() == "not found")
+    return detail and detail.lower() == "not found"
 
 
 def db_init():
@@ -496,7 +496,7 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
     tourn_to_reqs = {}
     user_to_subscriptions = defaultdict(list)
 
-    def _check_requests_inner():
+    def _check_requests_inner(tourn_id, tourn_name, reqs, chat_ids):
         new_reqs = _get_requests(tourn_id)
         new_diff = set(new_reqs) - set(reqs)
         old_diff = set(reqs) - set(new_reqs)
@@ -536,7 +536,7 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
             user_to_subscriptions[chat_id].append((tourn_id, tourn_name))
         info = _get_info(tourn_id)
         if DT(info["dateEnd"]) > DT(now()):
-            _check_requests_inner()
+            _check_requests_inner(tourn_id, tourn_name, reqs, chat_ids)
         if not chat_ids_whitelist and info_is_bad(info):
             logger.debug(f"adding request for removal of tourn_id {tourn_id}")
             reqs_for_committing.append(
