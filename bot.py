@@ -542,10 +542,9 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
             reqs_for_committing.append(
                 ("""delete from data where id = ?""", (tourn_id,))
             )
-    for chat_id in user_to_message:
-        if chat_ids_whitelist and chat_id not in chat_ids_whitelist:
-            continue
-        logger.debug(f"processing messages to {chat_id}")
+    logger.debug(f"total {len(user_to_message)} chats will be messaged")
+
+    def get_messages_for_chat(chat_id):
         tups = user_to_message[chat_id]
         texts = [x[1] for x in tups]
         tourn_ids = [x[0] for x in tups]
@@ -556,14 +555,27 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
         host = prefs.get("host") or DEFAULT_HOST
         for t in sorted(other_subscribed_tourns):
             tourn_id, tourn_name = t
-            reqs = tourn_to_reqs[t]
+            reqs = tourn_to_reqs.get(t)
             if reqs:
                 texts.append(
                     f"""Ранее нерассмотренные заявки на турнир <b>{tourn_id} {tourn_name}</b>. <a href="https://{host}/tournament/{tourn_id}/requests">Рассмотреть</a>\n\n"""
                     + make_msg_from_reqs(reqs)
                 )
-        logger.debug(f"sending messages to {chat_id}")
+        return texts
+
+    for chat_id in user_to_message:
+        if chat_ids_whitelist and chat_id not in chat_ids_whitelist:
+            continue
+        logger.debug(f"processing messages to {chat_id}")
+        try:
+            texts = get_messages_for_chat(chat_id)
+        except Exception as e:
+            logger.error(f"error while trying to process messages for {chat_id}: {type(e)} {e}")
+            continue
         final_text = "\n\n".join(texts)
+        if not final_text:
+            continue
+        logger.debug(f"sending messages to {chat_id}")
         for batch in get_batches(final_text):
             await try_send_message(context, chat_id, batch, parse_mode=ParseMode.HTML)
     if not chat_ids_whitelist and reqs_for_committing:
