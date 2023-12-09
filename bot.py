@@ -780,7 +780,7 @@ async def log_tail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not os.path.isfile(log_path):
         await update.message.reply_text("Лог-файл не найден.")
         return
-    text = subprocess.check_output(["tail", log_path, "-n", "25"])
+    text = subprocess.check_output(["/usr/bin/tail", log_path, "-n", "25"])
     if text:
         await update.message.reply_text(text.decode("utf8"))
 
@@ -792,9 +792,9 @@ async def log_grep(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Лог-файл не найден.")
         return
     text = update.message.text[len("/log_grep ") :]
-    proc1 = subprocess.Popen(["grep", text, log_path], stdout=subprocess.PIPE)
+    proc1 = subprocess.Popen(["/usr/bin/grep", text, log_path], stdout=subprocess.PIPE)
     proc2 = subprocess.Popen(
-        ["tail", "-n", "25"], stdin=proc1.stdout, stdout=subprocess.PIPE
+        ["/usr/bin/tail", "-n", "25"], stdin=proc1.stdout, stdout=subprocess.PIPE
     )
     proc1.stdout.close()
     out, _ = proc2.communicate()
