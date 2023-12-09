@@ -60,6 +60,7 @@ NOT_CANCEL = "^(?!/cancel)"
 UTC_PLUS_3 = datetime.timezone(datetime.timedelta(seconds=10800))
 ADMINS = []
 DEFAULT_HOST = "rating.chgk.info"
+ANNOUNCE_CHANNEL_ID = -1001568906741
 
 
 class Formatter(logging.Formatter):
@@ -129,10 +130,28 @@ def convert_request_info(request):
 
 async def try_send_message(context, *args, **kwargs):
     try:
-        await context.application.bot.send_message(*args, **kwargs)
+        return await context.application.bot.send_message(*args, **kwargs)
     except Exception as e:
         logger.error(
             f"exception {type(e)} {e} while trying to send message with args {args} {kwargs}"
+        )
+
+
+async def try_send_photo(context, *args, **kwargs):
+    try:
+        return await context.application.bot.send_photo(*args, **kwargs)
+    except Exception as e:
+        logger.error(
+            f"exception {type(e)} {e} while trying to send photo with args {args} {kwargs}"
+        )
+
+
+async def try_copy_message(context, *args, **kwargs):
+    try:
+        return await context.application.bot.copy_message(*args, **kwargs)
+    except Exception as e:
+        logger.error(
+            f"exception {type(e)} {e} while trying to send photo with args {args} {kwargs}"
         )
 
 
@@ -570,7 +589,9 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
         try:
             texts = get_messages_for_chat(chat_id)
         except Exception as e:
-            logger.error(f"error while trying to process messages for {chat_id}: {type(e)} {e}")
+            logger.error(
+                f"error while trying to process messages for {chat_id}: {type(e)} {e}"
+            )
             continue
         final_text = "\n\n".join(texts)
         if not final_text:
@@ -870,6 +891,58 @@ async def set_dates_prefs(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return -1
 
 
+async def announce_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    reply = "Пришлите сообщение для отправки в канал с анонсами:"
+    await update.message.reply_html(reply)
+    return 1
+
+
+async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message.photo:
+        if len(update.message.caption) < 200:
+            await update.message.reply_html(
+                "Слишком короткое сообщение. Введите новую версию или нажмите /cancel"
+            )
+            return 1
+        msg = await try_copy_message(
+            context,
+            chat_id=ANNOUNCE_CHANNEL_ID,
+            from_chat_id=update.message.chat.id,
+            message_id=update.message.message_id,
+        )
+        if msg:
+            await update.message.reply_html("Анонс успешно отправлен!")
+        else:
+            await update.message.reply_html(
+                "Что-то пошло не так :( Напишите разработчику бота"
+            )
+        return -1
+    elif update.message.text:
+        if len(update.message.text) < 200:
+            await update.message.reply_html(
+                "Слишком короткое сообщение. Введите новую версию или нажмите /cancel"
+            )
+            return 1
+        msg = await try_copy_message(
+            context,
+            chat_id=ANNOUNCE_CHANNEL_ID,
+            from_chat_id=update.message.chat.id,
+            message_id=update.message.message_id,
+        )
+        if msg:
+            await update.message.reply_html("Анонс успешно отправлен!")
+        else:
+            await update.message.reply_html(
+                "Что-то пошло не так :( Напишите разработчику бота"
+            )
+        return -1
+    else:
+        await update.message.reply_html(
+            "Не получилось распарсить сообщение :( Введите новую версию или нажмите /cancel"
+        )
+        return 1
+
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Cancels and ends the conversation."""
     await update.message.reply_text("Команда отменена.")
@@ -985,6 +1058,19 @@ def main():
     )
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("get_dates_prefs", get_dates_prefs))
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("announce", announce_entry)],
+        states={
+            1: [
+                MessageHandler(filters.Regex(NOT_CANCEL), announce),
+                MessageHandler(filters.FORWARDED, announce),
+                MessageHandler(filters.PHOTO, announce),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        conversation_timeout=300,
+    )
+    app.add_handler(conv_handler)
 
     #  admin commands below
     app.add_handler(CommandHandler("debug_info", debug_info))
