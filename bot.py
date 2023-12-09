@@ -2,13 +2,16 @@
 # -*- coding: utf-8 -*-
 import argparse
 import datetime
+import functools
 import itertools
 import json
 import logging
+from pathlib import Path
 import logging.handlers
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import urllib
 from collections import defaultdict
@@ -30,19 +33,22 @@ from telegram.ext import (
 API = "https://api.rating.chgk.net"
 DIR = os.path.dirname(os.path.abspath(__file__))
 DB_LOC = os.path.join(DIR, "bot.db")
-DB_INIT = """\
-CREATE TABLE IF NOT EXISTS data (
+DB_INIT = [
+    """CREATE TABLE IF NOT EXISTS data (
     id integer PRIMARY KEY,
     name text,
     state text,
     chat_ids text,
     prefs text
-);
-CREATE TABLE IF NOT EXISTS chat_prefs (
+);""",
+    """CREATE TABLE IF NOT EXISTS chat_prefs (
     chat_id integer PRIMARY KEY,
     prefs text
-)
-"""
+)""",
+    """CREATE TABLE IF NOT EXISTS banned_users (
+    chat_id integer PRIMARY KEY
+)""",
+]
 START = """\
 Привет! Это бот-помощник для турнирного сайта.
 
@@ -58,9 +64,10 @@ ID_TOURNS_TEXT = "Пожалуйста, укажите id турниров че�
 ID_TOURN_TEXT = "Пожалуйста, укажите id турнира или /cancel для отмены."
 NOT_CANCEL = "^(?!/cancel)"
 UTC_PLUS_3 = datetime.timezone(datetime.timedelta(seconds=10800))
-ADMINS = []
 DEFAULT_HOST = "rating.chgk.info"
-ANNOUNCE_CHANNEL_ID = -1001568906741
+CONFIG = json.loads((Path(DIR) / "config.json").read_text())
+ANNOUNCE_CHANNEL_ID = CONFIG["announce_channel_id"]
+ADMINS = CONFIG["admins"]
 
 
 class Formatter(logging.Formatter):
@@ -80,7 +87,9 @@ class Formatter(logging.Formatter):
 log_suffix = "_debug" if "token_path" in " ".join(sys.argv) else ""
 formatter = Formatter("%(asctime)s %(message)s")
 fileHandler = logging.handlers.RotatingFileHandler(
-    os.path.join(DIR, f"rating_bot{log_suffix}.log"), maxBytes=1024 * 1024 * 16
+    os.path.join(DIR, f"rating_bot{log_suffix}.log"),
+    maxBytes=1024 * 1024 * 16,
+    backupCount=1,
 )
 fileHandler.setFormatter(formatter)
 consoleHandler = logging.StreamHandler()
@@ -91,7 +100,7 @@ logger.addHandler(consoleHandler)
 logger.addHandler(fileHandler)
 default_logger = logging.getLogger()
 default_fileHandler = logging.handlers.RotatingFileHandler(
-    os.path.join(DIR, "rating_bot_ext.log"), maxBytes=1024 * 1024 * 16
+    os.path.join(DIR, "rating_bot_ext.log"), maxBytes=1024 * 1024 * 16, backupCount=1
 )
 default_fileHandler.setFormatter(formatter)
 default_logger.setLevel(logging.DEBUG)
@@ -112,11 +121,11 @@ def info_is_bad(info):
 
 
 def db_init():
-    if not os.path.isfile(DB_LOC):
-        conn = sqlite3.connect(DB_LOC)
-        cur = conn.cursor()
-        cur.execute(DB_INIT)
-        conn.commit()
+    conn = sqlite3.connect(DB_LOC)
+    cur = conn.cursor()
+    for statement in DB_INIT:
+        cur.execute(statement)
+    conn.commit()
 
 
 def convert_request_info(request):
@@ -164,6 +173,56 @@ async def try_forward_message(context, *args, **kwargs):
         )
 
 
+def get_banned_users():
+    conn = sqlite3.connect(DB_LOC)
+    cur = conn.cursor()
+    banned_users = cur.execute("""select chat_id from banned_users;""").fetchall()
+    return {x[0] for x in banned_users}
+
+
+def ban_user(chat_id):
+    if chat_id in get_banned_users():
+        return False
+    conn = sqlite3.connect(DB_LOC)
+    cur = conn.cursor()
+    cur.execute("""insert into banned_users(chat_id) values (?)""", (chat_id,))
+    conn.commit()
+    return True
+
+
+def unban_user(chat_id):
+    if chat_id not in get_banned_users():
+        return False
+    conn = sqlite3.connect(DB_LOC)
+    cur = conn.cursor()
+    cur.execute("""delete from banned_users where chat_id = ?""", (chat_id,))
+    conn.commit()
+    return True
+
+
+def admin_command(func):
+    @functools.wraps(func)
+    async def wrapped_func(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_chat.id not in ADMINS:
+            await update.message.reply_text("Вы не админ бота.")
+            return
+        return await func(update, context)
+
+    return wrapped_func
+
+
+def command(func):
+    @functools.wraps(func)
+    async def wrapped_func(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_chat.id in get_banned_users():
+            await update.message.reply_text("Вы забанены.")
+            return
+        return await func(update, context)
+
+    return wrapped_func
+
+
+@command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_markdown(START)
 
@@ -361,6 +420,7 @@ def get_list_of_ints(str_):
     ]
 
 
+@command
 async def subscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
     tourn_ids = get_list_of_ints(text)
@@ -375,6 +435,7 @@ async def subscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return 1
 
 
+@command
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text[len("/subscribe") :]
     tourn_ids = get_list_of_ints(text)
@@ -389,6 +450,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return 1
 
 
+@command
 async def get_top3_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
     tourn_ids = get_list_of_ints(text)
@@ -400,6 +462,7 @@ async def get_top3_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return 1
 
 
+@command
 async def get_top3(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text[len("/get_top3") :]
     tourn_ids = get_list_of_ints(text)
@@ -411,6 +474,7 @@ async def get_top3(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return 1
 
 
+@command
 async def unsubscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
     tourn_ids = get_list_of_ints(text)
@@ -425,6 +489,7 @@ async def unsubscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return 1
 
 
+@command
 async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text[len("/unsubscribe") :]
     tourn_ids = get_list_of_ints(text)
@@ -455,6 +520,7 @@ def validate_host(host):
     return host and RE_HOST.search(host) and "." in host
 
 
+@command
 async def set_host(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text[len("/set_host") :]
     host = strip_host(text)
@@ -476,6 +542,7 @@ async def set_host(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     return -1
 
 
+@command
 async def set_host_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
     host = strip_host(text)
@@ -689,71 +756,110 @@ async def check_requests_debug(context: CallbackContext):
     await _check_requests(context=context, chat_ids_whitelist=ADMINS)
 
 
+@admin_command
 async def echo_md(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text[len("/echo_md ") :]
     await update.message.reply_markdown(text)
 
 
+@admin_command
 async def debug_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_chat.id not in ADMINS:
-        await update.message.reply_text("Вы не админ бота.")
-        return
     next_ts = sorted([j.next_t for j in context.application.job_queue.jobs()])[0]
     await update.message.reply_text(f"next regular job will be run at {next_ts}")
 
 
+@admin_command
 async def echo_html(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text[len("/echo_html ") :]
     await update.message.reply_html(text)
 
 
+@admin_command
 async def log_tail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_chat.id not in ADMINS:
-        await update.message.reply_text("Вы не админ бота.")
-        return
     log_path = os.path.join(DIR, "rating_bot.log")
     if not os.path.isfile(log_path):
         await update.message.reply_text("Лог-файл не найден.")
         return
-    with open(log_path, "r") as f:
-        cnt = f.read().split("\n")
-    await update.message.reply_text("\n".join(cnt[-25:]))
+    text = subprocess.check_output(["tail", log_path, "-n", "25"])
+    if text:
+        await update.message.reply_text(text.decode("utf8"))
 
 
+@admin_command
+async def log_grep(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    log_path = os.path.join(DIR, "rating_bot.log")
+    if not os.path.isfile(log_path):
+        await update.message.reply_text("Лог-файл не найден.")
+        return
+    text = update.message.text[len("/log_grep ") :]
+    proc1 = subprocess.Popen(["grep", text, log_path], stdout=subprocess.PIPE)
+    proc2 = subprocess.Popen(
+        ["tail", "-n", "25"], stdin=proc1.stdout, stdout=subprocess.PIPE
+    )
+    proc1.stdout.close()
+    out, _ = proc2.communicate()
+    if out:
+        await update.message.reply_text(out.decode("utf8"))
+
+
+@admin_command
+async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = tryint(update.message.text[len("/ban") :].strip())
+    if not chat_id:
+        await update.message.reply_text("ID чата не распознан")
+        return
+    if chat_id in get_banned_users():
+        await update.message.reply_text(f"Пользователь {chat_id} уже забанен")
+        return
+    result = ban_user(chat_id)
+    if result:
+        await update.message.reply_text(f"Пользователь {chat_id} забанен")
+    else:
+        await update.message.reply_text("Что-то пошло не так :(")
+
+
+@admin_command
+async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = tryint(update.message.text[len("/unban") :].strip())
+    if not chat_id:
+        await update.message.reply_text("ID чата не распознан")
+        return
+    if chat_id not in get_banned_users():
+        await update.message.reply_text(f"Пользователь {chat_id} и так не забанен")
+        return
+    result = unban_user(chat_id)
+    if result:
+        await update.message.reply_text(f"Пользователь {chat_id} разбанен")
+    else:
+        await update.message.reply_text("Что-то пошло не так :(")
+
+
+@admin_command
 async def run_check_requests(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    if update.effective_chat.id not in ADMINS:
-        await update.message.reply_text("Вы не админ бота.")
-        return
     await update.message.reply_text("running regular job..")
     context.application.job_queue.run_once(check_requests, when=1)
 
 
+@admin_command
 async def run_make_reminders(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    if update.effective_chat.id not in ADMINS:
-        await update.message.reply_text("Вы не админ бота.")
-        return
     await update.message.reply_text("running regular job..")
     context.application.job_queue.run_once(make_reminders, when=1)
 
 
+@admin_command
 async def run_check_requests_debug(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    if update.effective_chat.id not in ADMINS:
-        await update.message.reply_text("Вы не админ бота.")
-        return
     await update.message.reply_text("running regular job in debug mode..")
     context.application.job_queue.run_once(check_requests_debug, when=1)
 
 
+@admin_command
 async def run_test_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_chat.id not in ADMINS:
-        await update.message.reply_text("Вы не админ бота.")
-        return
     await update.message.reply_text("running test job..")
     context.application.job_queue.run_once(test_job, when=1)
 
@@ -767,10 +873,8 @@ def get_batches(res):
     return batches
 
 
+@admin_command
 async def get_subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_chat.id not in ADMINS:
-        await update.message.reply_text("Вы не админ бота.")
-        return
     conn = sqlite3.connect(DB_LOC)
     data = conn.cursor().execute("""select id, name, chat_ids from data""").fetchall()
     user_to_tourns = defaultdict(list)
@@ -790,6 +894,7 @@ async def get_subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text(batch)
 
 
+@command
 async def my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     conn = sqlite3.connect(DB_LOC)
     data = conn.cursor().execute("""select id, name, chat_ids from data""").fetchall()
@@ -811,6 +916,7 @@ async def my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("Сейчас вы не подписаны ни на один турнир.")
 
 
+@command
 async def get_dates_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_html(
         "Введите дату либо дату и время (UTC+3) начала синхрона в формате: <pre>2023-01-31</pre> либо <pre>2023-01-31 11:00</pre>"
@@ -818,6 +924,7 @@ async def get_dates_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return 1
 
 
+@command
 async def get_dates_enter_date(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -834,6 +941,7 @@ async def get_dates_enter_date(
         return 1
 
 
+@command
 async def get_dates_enter_sync_days(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -858,6 +966,7 @@ async def get_dates_enter_sync_days(
         return 2
 
 
+@command
 async def get_dates_enter_async_days(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -871,11 +980,13 @@ async def get_dates_enter_async_days(
     return -1
 
 
+@command
 async def get_dates_prefs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     prefs = get_dates_prefs_req(update.effective_chat.id)
     await update.message.reply_html(prefs)
 
 
+@command
 async def set_dates_prefs_entry(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -893,6 +1004,7 @@ async def set_dates_prefs_entry(
         return 1
 
 
+@command
 async def set_dates_prefs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text
     reply = set_dates_prefs_req(dates_update=text, chat_id=update.effective_chat.id)
@@ -900,12 +1012,18 @@ async def set_dates_prefs(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return -1
 
 
+@command
 async def announce_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reply = "Пришлите сообщение для отправки в канал с анонсами:"
     await update.message.reply_html(reply)
     return 1
 
 
+def udumps(s):
+    return json.dumps(s, ensure_ascii=False)
+
+
+@command
 async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message.photo:
         if len(update.message.caption) < 200:
@@ -920,14 +1038,20 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = await method(
             context,
             chat_id=ANNOUNCE_CHANNEL_ID,
-            from_chat_id=update.message.chat.id,
+            from_chat_id=update.effective_chat.id,
             message_id=update.message.message_id,
         )
         if msg:
             await update.message.reply_html("Анонс успешно отправлен!")
+            logger.info(
+                f"user {update.effective_chat.id} sent announce {udumps(update.message.caption)}"
+            )
         else:
             await update.message.reply_html(
                 "Что-то пошло не так :( Напишите разработчику бота"
+            )
+            logger.error(
+                f"error while trying to send announce {udumps(update.message.caption)} from user {update.effective_chat.id}"
             )
         return -1
     elif update.message.text:
@@ -943,14 +1067,20 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = await method(
             context,
             chat_id=ANNOUNCE_CHANNEL_ID,
-            from_chat_id=update.message.chat.id,
+            from_chat_id=update.effective_chat.id,
             message_id=update.message.message_id,
         )
         if msg:
             await update.message.reply_html("Анонс успешно отправлен!")
+            logger.info(
+                f"user {update.effective_chat.id} sent announce {udumps(update.message.text)}"
+            )
         else:
             await update.message.reply_html(
                 "Что-то пошло не так :( Напишите разработчику бота"
+            )
+            logger.error(
+                f"error while trying to send announce {udumps(update.message.text)} from user {update.effective_chat.id}"
             )
         return -1
     else:
@@ -960,6 +1090,7 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return 1
 
 
+@command
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Cancels and ends the conversation."""
     await update.message.reply_text("Команда отменена.")
@@ -980,11 +1111,6 @@ def main():
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--token_path")
     args = parser.parse_args()
-
-    admins_path = os.path.join(DIR, "admins.json")
-    if os.path.exists(admins_path):
-        with open(admins_path) as f:
-            ADMINS.extend(json.loads(f.read()))
 
     db_init()
     token_path = args.token_path or os.path.join(DIR, "token")
@@ -1092,6 +1218,9 @@ def main():
     #  admin commands below
     app.add_handler(CommandHandler("debug_info", debug_info))
     app.add_handler(CommandHandler("log_tail", log_tail))
+    app.add_handler(CommandHandler("log_grep", log_grep))
+    app.add_handler(CommandHandler("ban", ban))
+    app.add_handler(CommandHandler("unban", unban))
     app.add_handler(CommandHandler("get_subscribers", get_subscribers))
     app.add_handler(CommandHandler("run_check_requests", run_check_requests))
     app.add_handler(CommandHandler("run_make_reminders", run_make_reminders))
