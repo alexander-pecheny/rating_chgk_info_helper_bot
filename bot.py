@@ -155,6 +155,15 @@ async def try_copy_message(context, *args, **kwargs):
         )
 
 
+async def try_forward_message(context, *args, **kwargs):
+    try:
+        return await context.application.bot.forward_message(*args, **kwargs)
+    except Exception as e:
+        logger.error(
+            f"exception {type(e)} {e} while trying to send photo with args {args} {kwargs}"
+        )
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_markdown(START)
 
@@ -904,7 +913,11 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "Слишком короткое сообщение. Введите новую версию или нажмите /cancel"
             )
             return 1
-        msg = await try_copy_message(
+        if update.message.forward_from_chat:
+            method = try_forward_message
+        else:
+            method = try_copy_message
+        msg = await method(
             context,
             chat_id=ANNOUNCE_CHANNEL_ID,
             from_chat_id=update.message.chat.id,
@@ -923,7 +936,11 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "Слишком короткое сообщение. Введите новую версию или нажмите /cancel"
             )
             return 1
-        msg = await try_copy_message(
+        if update.message.forward_from_chat:
+            method = try_forward_message
+        else:
+            method = try_copy_message
+        msg = await method(
             context,
             chat_id=ANNOUNCE_CHANNEL_ID,
             from_chat_id=update.message.chat.id,
