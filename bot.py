@@ -630,13 +630,14 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
         for chat_id in chat_ids:
             user_to_subscriptions[chat_id].append((tourn_id, tourn_name))
         info = _get_info(tourn_id)
-        if DT(info["dateEnd"]) > DT(now()):
-            _check_requests_inner(tourn_id, tourn_name, reqs, chat_ids)
         if not chat_ids_whitelist and info_is_bad(info):
             logger.debug(f"adding request for removal of tourn_id {tourn_id}")
             reqs_for_committing.append(
                 ("""delete from data where id = ?""", (tourn_id,))
             )
+            continue
+        if DT(info["dateEnd"]) > DT(now()):
+            _check_requests_inner(tourn_id, tourn_name, reqs, chat_ids)
     logger.debug(f"total {len(user_to_message)} chats will be messaged")
 
     def get_messages_for_chat(chat_id):
