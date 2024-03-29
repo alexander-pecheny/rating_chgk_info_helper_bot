@@ -1027,6 +1027,11 @@ def udumps(s):
 def is_forward(message):
     result = False
     try:
+        if message.forward_origin:
+            result = True
+    except AttributeError:
+        pass
+    try:
         if message.forward_from_chat:
             result = True
     except AttributeError:
@@ -1076,7 +1081,7 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "Слишком короткое сообщение. Введите новую версию или нажмите /cancel"
             )
             return 1
-        if update.message.forward_from_chat:
+        if is_forward(update.message):
             method = try_forward_message
         else:
             method = try_copy_message
