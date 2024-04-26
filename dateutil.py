@@ -5,6 +5,17 @@ import sys
 from dataclasses import dataclass
 
 
+UTC_PLUS_3 = datetime.timezone(datetime.timedelta(seconds=10800))
+
+
+def now():
+    return datetime.datetime.now(tz=UTC_PLUS_3)
+
+
+def parse_dt(dt):
+    return datetime.datetime.strptime(dt, "%Y-%m-%dT%H:%M:%S%z")
+
+
 def tryint(s):
     try:
         return int(s)

@@ -2,15 +2,18 @@ import httpx
 import logging
 import time
 import sys
+import functools
 from dateutil import DT
 
 logger = logging.getLogger("rating_bot")
 
 API = "https://api.rating.chgk.net"
 
+get = functools.partial(httpx.get, timeout=15.0)
+
 
 def _get_results(tourn_id):
-    res = httpx.get(
+    res = get(
         f"{API}/tournaments/{tourn_id}"
         + "/results.json?pagination=false&includeTeamMembers=1"
         + "&includeTeamFlags=1&includeMasksAndControversials=1"
@@ -20,7 +23,7 @@ def _get_results(tourn_id):
 
 
 def _get_appeals(tourn_id):
-    res = httpx.get(
+    res = get(
         f"{API}/tournaments/{tourn_id}/appeals.json?pagination=false"
     ).json()
     time.sleep(0.5)
@@ -28,7 +31,7 @@ def _get_appeals(tourn_id):
 
 
 def _get_info(tourn_id):
-    return httpx.get(f"{API}/tournaments/{tourn_id}.json").json()
+    return get(f"{API}/tournaments/{tourn_id}.json").json()
 
 
 def convert_request_info(request):
@@ -42,7 +45,7 @@ def convert_request_info(request):
 
 def _get_requests(t_id, only_new=True):
     logger.debug(f"getting requests from {t_id}...")
-    req = httpx.get(f"{API}/tournaments/{t_id}/requests.json?pagination=false")
+    req = get(f"{API}/tournaments/{t_id}/requests.json?pagination=false")
     time.sleep(0.5)
     if req.status_code != 200:
         sys.stderr.write(f"got response with error {req.status_code}: {req.text}\n")
@@ -108,14 +111,14 @@ def tourn_info_to_reminders(info, now: DT):
             if controversials:
                 messages.append(controversials)
         if delta >= 15:
-            appeals = generate_appeals_reminder_exact(info["id"])
-            if controversials:
+            appeals = generate_appeals_reminder_exact(info)
+            if appeals:
                 messages.append(appeals)
     else:
         if delta == 5:
-            messages.append(generate_controversials_reminder(info, now))
+            messages.append(generate_controversials_reminder(info))
         elif delta == 15:
-            messages.append(generate_appeals_reminder(info, now))
+            messages.append(generate_appeals_reminder(info))
     return "\n\n".join(messages)
 
 
@@ -180,3 +183,16 @@ def get_tourn_top3(tourn_id: int) -> str:
         result.append(f"<b>Топ-3 по флагу {flag}</b>")
         result.append(get_top3_by_flag(results, flag))
     return "\n".join(result)
+
+def info_is_bad(info):
+    detail = info.get("detail")
+    return detail and detail.lower() == "not found"
+
+
+def convert_request_info(request):
+    rep = request["representative"]
+    town = request["venue"]["town"]["name"]
+    return {
+        "status": request["status"],
+        "rep": f"{rep['id']} {rep['name']} {rep['surname']} ({town})",
+    }

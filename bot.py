@@ -3,21 +3,52 @@
 import argparse
 import datetime
 import functools
-import itertools
 import json
 import logging
-from pathlib import Path
 import logging.handlers
 import os
-import re
 import sqlite3
 import subprocess
 import sys
-import urllib
 from collections import defaultdict
+from pathlib import Path
 
-from dateutil import DatesPrefs, generate_dates, parse_dt_prefs, tryint, DT
-from ratingutil import get_tourn_top3, _get_requests, _get_info, tourn_info_to_reminders
+from dateutil import (
+    DT,
+    UTC_PLUS_3,
+    DatesPrefs,
+    generate_dates,
+    now,
+    parse_dt_prefs,
+    tryint,
+)
+from helpers import (
+    DB_INIT,
+    DEFAULT_HOST,
+    ID_TOURN_TEXT,
+    ID_TOURNS_TEXT,
+    NOT_CANCEL,
+    START,
+    get_batches,
+    get_list_of_ints,
+    get_next_reminder_job_time,
+    get_req_form,
+    is_forward,
+    make_msg_from_reqs,
+    parse_chat_ids,
+    serialize_chat_ids,
+    strip_host,
+    tourn_wrap_link,
+    udumps,
+    validate_host,
+)
+from ratingutil import (
+    _get_info,
+    _get_requests,
+    get_tourn_top3,
+    info_is_bad,
+    tourn_info_to_reminders,
+)
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -30,41 +61,8 @@ from telegram.ext import (
     filters,
 )
 
-API = "https://api.rating.chgk.net"
 DIR = os.path.dirname(os.path.abspath(__file__))
 DB_LOC = os.path.join(DIR, "bot.db")
-DB_INIT = [
-    """CREATE TABLE IF NOT EXISTS data (
-    id integer PRIMARY KEY,
-    name text,
-    state text,
-    chat_ids text,
-    prefs text
-);""",
-    """CREATE TABLE IF NOT EXISTS chat_prefs (
-    chat_id integer PRIMARY KEY,
-    prefs text
-)""",
-    """CREATE TABLE IF NOT EXISTS banned_users (
-    chat_id integer PRIMARY KEY
-)""",
-]
-START = """\
-Привет! Это бот-помощник для турнирного сайта.
-
-Он умеет оповещать о новых заявках на турниры.
-
-Чтобы подписаться на обновления, напиши `/subscribe` и id турниров через запятую, вот так:
-
-`/subscribe 7000, 9002, 9015`
-
-Чтобы отписаться, то же самое, но с командой `/unsubscribe`.
-"""
-ID_TOURNS_TEXT = "Пожалуйста, укажите id турниров через запятую или /cancel для отмены."
-ID_TOURN_TEXT = "Пожалуйста, укажите id турнира или /cancel для отмены."
-NOT_CANCEL = "^(?!/cancel)"
-UTC_PLUS_3 = datetime.timezone(datetime.timedelta(seconds=10800))
-DEFAULT_HOST = "rating.chgk.info"
 CONFIG = json.loads((Path(DIR) / "config.json").read_text())
 ANNOUNCE_CHANNEL_ID = CONFIG["announce_channel_id"]
 ADMINS = CONFIG["admins"]
@@ -107,34 +105,12 @@ default_logger.setLevel(logging.DEBUG)
 default_logger.addHandler(default_fileHandler)
 
 
-def now():
-    return datetime.datetime.now(tz=UTC_PLUS_3)
-
-
-def parse_dt(dt):
-    return datetime.datetime.strptime(dt, "%Y-%m-%dT%H:%M:%S%z")
-
-
-def info_is_bad(info):
-    detail = info.get("detail")
-    return detail and detail.lower() == "not found"
-
-
 def db_init():
     conn = sqlite3.connect(DB_LOC)
     cur = conn.cursor()
     for statement in DB_INIT:
         cur.execute(statement)
     conn.commit()
-
-
-def convert_request_info(request):
-    rep = request["representative"]
-    town = request["venue"]["town"]["name"]
-    return {
-        "status": request["status"],
-        "rep": f"{rep['id']} {rep['name']} {rep['surname']} ({town})",
-    }
 
 
 async def try_send_message(context, *args, **kwargs):
@@ -225,28 +201,6 @@ def command(func):
 @command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_markdown(START)
-
-
-def parse_chat_ids(chat_ids_str: str) -> list[int]:
-    if not chat_ids_str:
-        return []
-    sp = chat_ids_str.split(",")
-    return [int(x) for x in sp]
-
-
-def serialize_chat_ids(chat_ids: list[int]) -> str:
-    return ",".join(str(x) for x in chat_ids)
-
-
-def get_req_form(x: int):
-    s_x = str(x)
-    if s_x.endswith(("11", "12", "13", "14")):
-        return "нерассмотренных заявок"
-    if s_x.endswith("1"):
-        return "нерассмотренная заявка"
-    if s_x.endswith(("2", "3", "4")):
-        return "нерассмотренные заявки"
-    return "нерассмотренных заявок"
 
 
 def get_prefs(chat_id):
@@ -411,15 +365,6 @@ def get_dates_prefs_req(chat_id: int) -> str:
     return f"Ваши настройки дат: {curr_dates.hr()}."
 
 
-def get_list_of_ints(str_):
-    sp1 = str_.split(",")
-    return [
-        tryint(x)
-        for x in itertools.chain.from_iterable(x.split() for x in sp1)
-        if tryint(x)
-    ]
-
-
 @command
 async def subscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
@@ -504,22 +449,6 @@ async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return 1
 
 
-RE_HOST = re.compile("[a-z][a-z\\.]+[a-z]")
-
-
-def strip_host(host):
-    host = (host or "").strip()
-    for prefix in ("http://", "https://", "www."):
-        if host.startswith(prefix):
-            host = host[len(prefix) :]
-    host = urllib.parse.urlparse("https://" + host).netloc
-    return host
-
-
-def validate_host(host):
-    return host and RE_HOST.search(host) and "." in host
-
-
 @command
 async def set_host(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text[len("/set_host") :]
@@ -557,26 +486,6 @@ async def set_host_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if msgs:
         await update.message.reply_html("\n".join([x for x in msgs if x]))
     return -1
-
-
-def wrap_link(s):
-    id_ = s.split()[0]
-    return f"""<a href="https://{{host}}/player/{id_}">{s}</a>"""
-
-
-def tourn_wrap_link(s):
-    id_ = s.split()[0]
-    return f"""<a href="https://{{host}}/tournament/{id_}">{s}</a>"""
-
-
-def get_sorting_key(x):
-    sp = x.split()
-    return (sp[1], sp[2], sp[0])
-
-
-def make_msg_from_reqs(reqs):
-    srt = sorted([reqs[x]["rep"] for x in reqs], key=get_sorting_key)
-    return "\n".join([wrap_link(rep) for rep in srt])
 
 
 async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
@@ -726,10 +635,15 @@ async def make_reminders(context: CallbackContext):
                 ("""delete from data where id = ?""", (tourn_id,))
             )
             continue
-        reminders = tourn_info_to_reminders(info, DT(now()))
+        logger.debug(f"getting reminders for tournament {tourn_id}")
+        try:
+            reminders = tourn_info_to_reminders(info, DT(now()))
+        except Exception as e:
+            logger.debug(f"exception {type(e)} {e} while trying to get reminders for {tourn_id}")
         if reminders:
+            logger.debug(f"got reminders for tournament {tourn_id}")
             for chat_id in chat_ids:
-                user_to_message(chat_id).append(reminders)
+                user_to_message[chat_id].append(reminders)
     logger.info(f"got messages for {len(user_to_message)} chats")
     for chat_id in user_to_message:
         logger.debug(f"processing messages to {chat_id}")
@@ -863,15 +777,6 @@ async def run_check_requests_debug(
 async def run_test_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("running test job..")
     context.application.job_queue.run_once(test_job, when=1)
-
-
-def get_batches(res):
-    batches = []
-    while len(res) >= 2048:
-        batch, res = res[:2047], res[2047:]
-        batches.append(batch)
-    batches.append(res)
-    return batches
 
 
 @admin_command
@@ -1020,30 +925,6 @@ async def announce_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return 1
 
 
-def udumps(s):
-    return json.dumps(s, ensure_ascii=False)
-
-
-def is_forward(message):
-    result = False
-    try:
-        if message.forward_origin:
-            result = True
-    except AttributeError:
-        pass
-    try:
-        if message.forward_from_chat:
-            result = True
-    except AttributeError:
-        pass
-    try:
-        if message.forward_from:
-            result = True
-    except AttributeError:
-        pass
-    return result
-
-
 @command
 async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message.photo:
@@ -1117,14 +998,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Команда отменена.")
     logger.info(f"chat {update.effective_chat.id} canceled the conversation.")
     return ConversationHandler.END
-
-
-def get_next_reminder_job_time():
-    now = datetime.datetime.now(UTC_PLUS_3)
-    target = now.replace(hour=15, minute=30, second=0, microsecond=0)
-    if target < now:
-        target += datetime.timedelta(days=1)
-    return target
 
 
 def main():
