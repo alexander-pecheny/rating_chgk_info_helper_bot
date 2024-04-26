@@ -755,6 +755,7 @@ async def run_check_requests(
 ) -> None:
     await update.message.reply_text("running regular job..")
     context.application.job_queue.run_once(check_requests, when=1)
+    await update.message.reply_text("job finished successfully!")
 
 
 @admin_command
@@ -763,6 +764,7 @@ async def run_make_reminders(
 ) -> None:
     await update.message.reply_text("running regular job..")
     context.application.job_queue.run_once(make_reminders, when=1)
+    await update.message.reply_text("job finished successfully!")
 
 
 @admin_command
