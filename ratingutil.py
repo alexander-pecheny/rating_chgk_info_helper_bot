@@ -1,8 +1,10 @@
-import httpx
 import logging
 import time
 import sys
 import functools
+from collections import defaultdict
+
+import httpx
 from dateutil import DT
 
 logger = logging.getLogger("rating_bot")
@@ -31,7 +33,9 @@ def _get_appeals(tourn_id):
 
 
 def _get_info(tourn_id):
-    return get(f"{API}/tournaments/{tourn_id}.json").json()
+    res = get(f"{API}/tournaments/{tourn_id}.json").json()
+    time.sleep(0.5)
+    return res
 
 
 def convert_request_info(request):
@@ -101,25 +105,29 @@ def tourn_info_to_reminders(info, now: DT):
     curr_date = now.dt.date()
     end_date = DT(info["dateEnd"])
     can_check = can_check_controversials(info, now)
-    messages = []
+    messages = defaultdict(list)
     delta = (curr_date - end_date.dt.date()).days
     if delta == 1:
-        messages.append(generate_init_message(info, end_date))
+        init_message = generate_init_message(info, end_date)
+        messages["i"].append(init_message)
+        messages["a"].append(init_message)
     if can_check:
         if delta >= 5:
             controversials = generate_controversials_reminder_exact(info)
             if controversials:
-                messages.append(controversials)
+                messages["i"].append(controversials)
         if delta >= 15:
             appeals = generate_appeals_reminder_exact(info)
             if appeals:
-                messages.append(appeals)
+                messages["a"].append(appeals)
     else:
         if delta == 5:
-            messages.append(generate_controversials_reminder(info))
+            messages["i"].append(generate_controversials_reminder(info))
         elif delta == 15:
-            messages.append(generate_appeals_reminder(info))
-    return "\n\n".join(messages)
+            messages["a"].append(generate_appeals_reminder(info))
+    for k in messages:
+        messages[k] = "\n\n".join(messages[k])
+    return messages
 
 
 def format_place(place):

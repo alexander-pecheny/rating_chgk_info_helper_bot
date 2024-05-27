@@ -4,6 +4,7 @@ import itertools
 import re
 import urllib
 
+import msgpack
 from dateutil import UTC_PLUS_3, tryint
 
 API = "https://api.rating.chgk.net"
@@ -41,15 +42,21 @@ DEFAULT_HOST = "rating.chgk.info"
 RE_HOST = re.compile("[a-z][a-z\\.]+[a-z]")
 
 
-def parse_chat_ids(chat_ids_str: str) -> list[int]:
+ChatPrefsType = dict[int, dict[str, int]]
+
+
+def default_subscription() -> dict[str, int]:
+    return {"r": 1, "i": 1, "a": 1}
+
+
+def parse_chat_ids(chat_ids_str: str) -> ChatPrefsType:
     if not chat_ids_str:
-        return []
-    sp = chat_ids_str.split(",")
-    return [int(x) for x in sp]
+        return {}
+    return msgpack.loads(chat_ids_str, strict_map_key=False)
 
 
-def serialize_chat_ids(chat_ids: list[int]) -> str:
-    return ",".join(str(x) for x in chat_ids)
+def serialize_chat_ids(chat_ids: ChatPrefsType) -> str:
+    return msgpack.dumps(chat_ids)
 
 
 def get_req_form(x: int):

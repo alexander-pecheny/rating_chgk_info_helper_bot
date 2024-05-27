@@ -33,6 +33,7 @@ from helpers import (
     get_list_of_ints,
     get_next_reminder_job_time,
     get_req_form,
+    default_subscription,
     is_forward,
     make_msg_from_reqs,
     parse_chat_ids,
@@ -214,7 +215,7 @@ def get_prefs(chat_id):
     return {}
 
 
-def add_to_subscribers(tourn_id, chat_id) -> str:
+def add_to_subscribers(tourn_id, chat_id, sub_type="all") -> str:
     conn = sqlite3.connect(DB_LOC)
     cur = conn.cursor()
     data = cur.execute(
@@ -222,6 +223,12 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
     ).fetchall()
     prefs = get_prefs(chat_id)
     host = prefs.get("host") or DEFAULT_HOST
+    if sub_type == "all":
+        sub_dict = default_subscription()
+        suffix = ""
+    elif sub_type == "i":
+        sub_dict = {"r": 0, "i": 1, "a": 0}
+        suffix = " в качестве ИЖ"
     if not data:
         reqs = _get_requests(tourn_id)
         info = _get_info(tourn_id)
@@ -229,12 +236,13 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
         logger.debug(
             f"adding tournament {tourn_id} to base, with chat {chat_id} as first subscriber"
         )
+        chat_ids = {chat_id: sub_dict}
         cur.execute(
             """insert into data(id,name,state,chat_ids) values (?,?,?,?)""",
-            (tourn_id, name, json.dumps(reqs), str(chat_id)),
+            (tourn_id, name, json.dumps(reqs), serialize_chat_ids(chat_ids)),
         )
         conn.commit()
-        msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>. Там {len(reqs)} {get_req_form(len(reqs))}."
+        msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>{suffix}. Там {len(reqs)} {get_req_form(len(reqs))}."
         if reqs:
             msg += f""" <a href="https://{host}/tournament/{tourn_id}/requests">Рассмотреть</a>"""
         return msg
@@ -246,7 +254,7 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
         if chat_id in chat_ids:
             return f"Вы уже подписаны на турнир <b>{tourn_id} {name}</b>."
         else:
-            chat_ids.append(chat_id)
+            chat_ids[chat_id] = sub_dict
             logger.debug(
                 f"adding chat {chat_id} to subscribers of tournament {tourn_id}"
             )
@@ -255,7 +263,7 @@ def add_to_subscribers(tourn_id, chat_id) -> str:
                 (serialize_chat_ids(chat_ids), tourn_id),
             )
             conn.commit()
-            msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>. Там {len(reqs)} {get_req_form(len(reqs))}."
+            msg = f"Вы теперь подписаны на турнир <b>{tourn_id} {name}</b>{suffix}. Там {len(reqs)} {get_req_form(len(reqs))}."
             if reqs:
                 msg += f""" <a href="https://{host}/tournament/{tourn_id}/requests">Рассмотреть</a>"""
             return msg
@@ -274,7 +282,7 @@ def remove_from_subscribers(tourn_id, chat_id) -> str:
         name = data[1]
         chat_ids = parse_chat_ids(data[3])
         if chat_id in chat_ids:
-            chat_ids = [x for x in chat_ids if x != chat_id]
+            chat_ids.pop(chat_id, None)
             if chat_ids:
                 logger.debug(
                     f"removing chat {chat_id} from subscribers of tournament {tourn_id}"
@@ -378,6 +386,21 @@ async def subscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     else:
         await update.message.reply_html(ID_TOURNS_TEXT)
         return 1
+    
+
+@command
+async def subscribe_msg_izh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text
+    tourn_ids = get_list_of_ints(text)
+    msgs = []
+    for id_ in tourn_ids:
+        msgs.append(add_to_subscribers(id_, update.effective_chat.id, sub_type="i"))
+    if msgs:
+        await update.message.reply_html("\n".join([x for x in msgs if x]))
+        return -1
+    else:
+        await update.message.reply_html(ID_TOURNS_TEXT)
+        return 1
 
 
 @command
@@ -387,6 +410,21 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     msgs = []
     for id_ in tourn_ids:
         msgs.append(add_to_subscribers(id_, update.effective_chat.id))
+    if msgs:
+        await update.message.reply_html("\n".join([x for x in msgs if x]))
+        return -1
+    else:
+        await update.message.reply_html(ID_TOURNS_TEXT)
+        return 1
+    
+
+@command
+async def subscribe_izh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text[len("/subscribe_izh") :]
+    tourn_ids = get_list_of_ints(text)
+    msgs = []
+    for id_ in tourn_ids:
+        msgs.append(add_to_subscribers(id_, update.effective_chat.id, sub_type="i"))
     if msgs:
         await update.message.reply_html("\n".join([x for x in msgs if x]))
         return -1
@@ -524,7 +562,7 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
                 + make_msg_from_reqs(new_reqs)
             )
             for chat_id in chat_ids:
-                if chat_ids_whitelist and chat_id not in chat_ids_whitelist:
+                if (chat_ids_whitelist and chat_id not in chat_ids_whitelist) or not chat_ids[chat_id].get("r"):
                     continue
                 prefs = get_prefs(chat_id)
                 host = prefs.get("host") or DEFAULT_HOST
@@ -537,7 +575,8 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
         reqs = json.loads(rec[2])
         chat_ids = parse_chat_ids(rec[3])
         for chat_id in chat_ids:
-            user_to_subscriptions[chat_id].append((tourn_id, tourn_name))
+            if chat_ids[chat_id].get("r"):
+                user_to_subscriptions[chat_id].append((tourn_id, tourn_name))
         info = _get_info(tourn_id)
         if not chat_ids_whitelist and info_is_bad(info):
             logger.debug(f"adding request for removal of tourn_id {tourn_id}")
@@ -643,7 +682,15 @@ async def make_reminders(context: CallbackContext):
         if reminders:
             logger.debug(f"got reminders for tournament {tourn_id}")
             for chat_id in chat_ids:
-                user_to_message[chat_id].append(reminders)
+                sub_dict = chat_ids[chat_id]
+                subscriptions = {k for k in sub_dict if sub_dict[k]}
+                reminder_keys = set(reminders)
+                intersection = subscriptions & reminder_keys
+                if intersection:
+                    msgs = []
+                    for k in intersection:
+                        msgs.append(reminders[k])
+                    user_to_message[chat_id].append("\n\n".join(msgs))
     logger.info(f"got messages for {len(user_to_message)} chats")
     for chat_id in user_to_message:
         logger.debug(f"processing messages to {chat_id}")
@@ -1043,6 +1090,15 @@ def main():
         entry_points=[CommandHandler("subscribe", subscribe)],
         states={
             1: [MessageHandler(filters.Regex(NOT_CANCEL), subscribe_msg)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        conversation_timeout=300,
+    )
+    app.add_handler(conv_handler)
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("subscribe_izh", subscribe_izh)],
+        states={
+            1: [MessageHandler(filters.Regex(NOT_CANCEL), subscribe_msg_izh)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         conversation_timeout=300,
