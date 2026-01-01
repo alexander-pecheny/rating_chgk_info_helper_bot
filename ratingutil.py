@@ -25,9 +25,7 @@ def _get_results(tourn_id):
 
 
 def _get_appeals(tourn_id):
-    res = get(
-        f"{API}/tournaments/{tourn_id}/appeals.json?pagination=false"
-    ).json()
+    res = get(f"{API}/tournaments/{tourn_id}/appeals.json?pagination=false").json()
     time.sleep(0.5)
     return res
 
@@ -73,7 +71,7 @@ def generate_init_message(info, end_date):
 
 def generate_controversials_reminder(info):
     tourn_name = f"<b>{info['id']} {info['name']}</b>"
-    return f"""Спорные на турнире {tourn_name} должны быть <a href="https://rating.chgk.info/tournament/{info['id']}/controversials">рассмотрены</a> до конца следующего дня."""
+    return f"""Спорные на турнире {tourn_name} должны быть <a href="https://rating.chgk.info/tournament/{info["id"]}/controversials">рассмотрены</a> до конца следующего дня."""
 
 
 def generate_controversials_reminder_exact(info):
@@ -85,12 +83,12 @@ def generate_controversials_reminder_exact(info):
             if controversial["status"] == "N":
                 new_controversials += 1
     if new_controversials:
-        return f"""На турнире {tourn_name} {new_controversials} нерассмотренных спорных. <a href="https://rating.chgk.info/tournament/{info['id']}/controversials">Рассмотреть</a>"""
+        return f"""На турнире {tourn_name} {new_controversials} нерассмотренных спорных. <a href="https://rating.chgk.info/tournament/{info["id"]}/controversials">Рассмотреть</a>"""
 
 
 def generate_appeals_reminder(info):
     tourn_name = f"<b>{info['id']} {info['name']}</b>"
-    return f"""Апелляции на турнире {tourn_name} должны быть <a href="https://rating.chgk.info/tournament/{info['id']}/appeals">рассмотрены</a> до конца следующего дня."""
+    return f"""Апелляции на турнире {tourn_name} должны быть <a href="https://rating.chgk.info/tournament/{info["id"]}/appeals">рассмотрены</a> до конца следующего дня."""
 
 
 def generate_appeals_reminder_exact(info):
@@ -98,7 +96,7 @@ def generate_appeals_reminder_exact(info):
     appeals = _get_appeals(info["id"])
     new_appeals = len([a for a in appeals if a["status"] == "N"])
     if new_appeals:
-        return f"""На турнире {tourn_name} {new_appeals} нерассмотренных апелляций. <a href="https://rating.chgk.info/tournament/{info['id']}/appeals">Рассмотреть</a>"""
+        return f"""На турнире {tourn_name} {new_appeals} нерассмотренных апелляций. <a href="https://rating.chgk.info/tournament/{info["id"]}/appeals">Рассмотреть</a>"""
 
 
 def tourn_info_to_reminders(info, now: DT):
@@ -192,15 +190,7 @@ def get_tourn_top3(tourn_id: int) -> str:
         result.append(get_top3_by_flag(results, flag))
     return "\n".join(result)
 
+
 def info_is_bad(info):
     detail = info.get("detail")
     return detail and detail.lower() == "not found"
-
-
-def convert_request_info(request):
-    rep = request["representative"]
-    town = request["venue"]["town"]["name"]
-    return {
-        "status": request["status"],
-        "rep": f"{rep['id']} {rep['name']} {rep['surname']} ({town})",
-    }

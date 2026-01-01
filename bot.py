@@ -386,7 +386,7 @@ async def subscribe_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     else:
         await update.message.reply_html(ID_TOURNS_TEXT)
         return 1
-    
+
 
 @command
 async def subscribe_msg_izh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -416,7 +416,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     else:
         await update.message.reply_html(ID_TOURNS_TEXT)
         return 1
-    
+
 
 @command
 async def subscribe_izh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -438,7 +438,8 @@ async def get_top3_msg(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     text = update.message.text
     tourn_ids = get_list_of_ints(text)
     if len(tourn_ids) == 1:
-        await update.message.reply_html(get_tourn_top3(tourn_ids[0]))
+        for batch in get_batches(get_tourn_top3(tourn_ids[0])):
+            await update.message.reply_html(batch)
         return -1
     else:
         await update.message.reply_html(ID_TOURN_TEXT)
@@ -450,7 +451,8 @@ async def get_top3(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text[len("/get_top3") :]
     tourn_ids = get_list_of_ints(text)
     if len(tourn_ids) == 1:
-        await update.message.reply_html(get_tourn_top3(tourn_ids[0]))
+        for batch in get_batches(get_tourn_top3(tourn_ids[0])):
+            await update.message.reply_html(batch)
         return -1
     else:
         await update.message.reply_html(ID_TOURN_TEXT)
@@ -562,7 +564,9 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
                 + make_msg_from_reqs(new_reqs)
             )
             for chat_id in chat_ids:
-                if (chat_ids_whitelist and chat_id not in chat_ids_whitelist) or not chat_ids[chat_id].get("r"):
+                if (
+                    chat_ids_whitelist and chat_id not in chat_ids_whitelist
+                ) or not chat_ids[chat_id].get("r"):
                     continue
                 prefs = get_prefs(chat_id)
                 host = prefs.get("host") or DEFAULT_HOST
@@ -678,7 +682,9 @@ async def make_reminders(context: CallbackContext):
         try:
             reminders = tourn_info_to_reminders(info, DT(now()))
         except Exception as e:
-            logger.debug(f"exception {type(e)} {e} while trying to get reminders for {tourn_id}")
+            logger.debug(
+                f"exception {type(e)} {e} while trying to get reminders for {tourn_id}"
+            )
         if reminders:
             logger.debug(f"got reminders for tournament {tourn_id}")
             for chat_id in chat_ids:
@@ -688,8 +694,12 @@ async def make_reminders(context: CallbackContext):
                 intersection = subscriptions & reminder_keys
                 if intersection:
                     msgs = []
+                    seen = set()
                     for k in intersection:
-                        msgs.append(reminders[k])
+                        msg = reminders[k]
+                        if msg not in seen:
+                            seen.add(msg)
+                            msgs.append(msg)
                     user_to_message[chat_id].append("\n\n".join(msgs))
     logger.info(f"got messages for {len(user_to_message)} chats")
     for chat_id in user_to_message:

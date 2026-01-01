@@ -112,12 +112,88 @@ def make_msg_from_reqs(reqs):
     return "\n".join([wrap_link(rep) for rep in srt])
 
 
-def get_batches(res):
+def get_open_tags(text):
+    """Returns a list of currently open HTML tags in order."""
+    open_tags = []
+    tag_pattern = re.compile(r"<(/?)(\w+)(?:\s[^>]*)?>")
+    for match in tag_pattern.finditer(text):
+        is_closing = match.group(1) == "/"
+        tag_name = match.group(2).lower()
+        if is_closing:
+            if open_tags and open_tags[-1] == tag_name:
+                open_tags.pop()
+        else:
+            open_tags.append(tag_name)
+    return open_tags
+
+
+def close_tags(tags):
+    """Generate closing tags in reverse order."""
+    return "".join(f"</{tag}>" for tag in reversed(tags))
+
+
+def open_tags(tags):
+    """Generate opening tags in order."""
+    return "".join(f"<{tag}>" for tag in tags)
+
+
+def find_safe_split_point(text, max_len):
+    """Find a safe point to split text, preferring newlines and avoiding tag breaks."""
+    if len(text) <= max_len:
+        return len(text)
+
+    search_area = text[:max_len]
+
+    # First try to find double newline (paragraph break)
+    last_para = search_area.rfind("\n\n")
+    if last_para > max_len // 2:
+        return last_para + 2
+
+    # Then try single newline
+    last_newline = search_area.rfind("\n")
+    if last_newline > max_len // 2:
+        return last_newline + 1
+
+    # Avoid splitting inside an HTML tag
+    # Find last '>' that's not inside an unclosed '<'
+    last_tag_end = search_area.rfind(">")
+    last_tag_start = search_area.rfind("<")
+
+    if last_tag_start > last_tag_end:
+        # We're inside a tag, back up to before it
+        return last_tag_start
+
+    return max_len
+
+
+def get_batches(res, max_len=2048):
     batches = []
-    while len(res) >= 2048:
-        batch, res = res[:2047], res[2047:]
+    current_open_tags = []
+
+    while res:
+        if len(res) <= max_len:
+            batches.append(open_tags(current_open_tags) + res)
+            break
+
+        # Account for tag overhead in this batch
+        prefix = open_tags(current_open_tags)
+        available_len = max_len - len(prefix)
+
+        split_point = find_safe_split_point(res, available_len)
+        batch_content = res[:split_point]
+
+        # Find what tags are open at the end of this batch
+        combined = prefix + batch_content
+        tags_at_end = get_open_tags(combined)
+
+        # Close any open tags at the end of this batch
+        batch = combined + close_tags(tags_at_end)
         batches.append(batch)
-    batches.append(res)
+
+        # Remember open tags for next batch
+        current_open_tags = tags_at_end
+        res = res[split_point:].lstrip("\n")
+
     return batches
 
 
