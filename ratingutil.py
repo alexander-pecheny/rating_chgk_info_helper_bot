@@ -60,7 +60,10 @@ def _get_requests(t_id, only_new=True):
 
 
 def can_check_controversials(info, now):
-    hide_questions = DT(info["synchData"]["hideQuestionsTo"])
+    hide_to = info.get("hideQuestionsTo")
+    if not hide_to:
+        return False
+    hide_questions = DT(hide_to)
     return hide_questions < now
 
 
