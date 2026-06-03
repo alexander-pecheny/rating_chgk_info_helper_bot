@@ -542,6 +542,9 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
 
     def _check_requests_inner(tourn_id, tourn_name, reqs, chat_ids):
         new_reqs = _get_requests(tourn_id)
+        if new_reqs is None:
+            logger.error(f"could not get requests for tourn_id {tourn_id}, skipping")
+            return
         new_diff = set(new_reqs) - set(reqs)
         old_diff = set(reqs) - set(new_reqs)
         tourn_to_reqs[(tourn_id, tourn_name)] = new_reqs
@@ -581,15 +584,19 @@ async def _check_requests(context: CallbackContext, chat_ids_whitelist=None):
         for chat_id in chat_ids:
             if chat_ids[chat_id].get("r"):
                 user_to_subscriptions[chat_id].append((tourn_id, tourn_name))
-        info = _get_info(tourn_id)
-        if not chat_ids_whitelist and info_is_bad(info):
-            logger.debug(f"adding request for removal of tourn_id {tourn_id}")
-            reqs_for_committing.append(
-                ("""delete from data where id = ?""", (tourn_id,))
-            )
+        try:
+            info = _get_info(tourn_id)
+            if not chat_ids_whitelist and info_is_bad(info):
+                logger.debug(f"adding request for removal of tourn_id {tourn_id}")
+                reqs_for_committing.append(
+                    ("""delete from data where id = ?""", (tourn_id,))
+                )
+                continue
+            if DT(info["dateEnd"]) > DT(now()):
+                _check_requests_inner(tourn_id, tourn_name, reqs, chat_ids)
+        except Exception as e:
+            logger.error(f"error while processing tourn_id {tourn_id}: {type(e)} {e}")
             continue
-        if DT(info["dateEnd"]) > DT(now()):
-            _check_requests_inner(tourn_id, tourn_name, reqs, chat_ids)
     logger.debug(f"total {len(user_to_message)} chats will be messaged")
 
     def get_messages_for_chat(chat_id):
