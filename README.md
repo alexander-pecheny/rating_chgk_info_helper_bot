@@ -4,21 +4,26 @@ A Telegram bot for organisers of ЧГК tournaments on rating.chgk.info. See [CO
 
 ## Running
 
-The working directory holds `config.json`, `token` and the two databases; the code lives in `src/`.
+The working directory holds `config.json`, `token` and the two databases.
 
 ```
-uv sync
-uv run rating-bot                          # live bot, jobs enabled
-uv run rating-bot --debug --token_path token_test   # test bot, no scheduled jobs
+go build -o rating_bot ./cmd/rating-bot
+./rating_bot                                  # live bot, jobs enabled
+./rating_bot --debug --token_path token_test  # test bot, no scheduled jobs
+go test ./...
 ```
 
 ## Deploying
 
+The binary is static and cross-compiled, so the vps never needs a Go toolchain
+and never spends its memory compiling.
+
 ```
-git pull && uv sync --no-dev && sudo systemctl restart rating_bot
+./deploy/build.sh                    # build for linux/amd64, copy, restart
 ```
 
-The unit is [deploy/rating_bot.service](./deploy/rating_bot.service); it passes `--data-dir` explicitly rather than relying on the working directory.
+The unit is [deploy/rating_bot.service](./deploy/rating_bot.service); it passes
+`--data-dir` explicitly rather than relying on the working directory.
 
 ## Logs
 
@@ -30,3 +35,14 @@ select datetime(ts,'unixepoch','localtime'), level, message from app_log where l
 ```
 
 Console output goes to journald: `journalctl -u rating_bot -f`.
+
+## Layout
+
+| Package | What lives there |
+| --- | --- |
+| `cmd/rating-bot` | flags, startup, shutdown |
+| `internal/tg` | update routing, the commands, the announce relay, the two jobs |
+| `internal/store` | `bot.db` and `logs.db`: subscriptions, conversation state, traffic |
+| `internal/rating` | the rating.chgk.info API, reminders and podiums |
+| `internal/dates` | parsing the site's timestamps, generating a tournament's date grid |
+| `internal/text` | wording, Russian plurals, and splitting a message to Telegram's limit |
