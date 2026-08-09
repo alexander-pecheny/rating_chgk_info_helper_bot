@@ -105,3 +105,36 @@ async def test_a_later_router_command_also_escapes_the_state(feed, session):
 
     assert "copyMessage" not in session.methods()
     assert any("настройки дат" in text for text in session.sent_texts())
+
+
+async def test_slash_prefixed_announcement_is_relayed_not_dropped(feed, session):
+    await feed(text="/announce")
+    await feed(text="/12.03 — отбор. " + "Подробности турнира. " * 15)
+
+    assert "copyMessage" in session.methods()
+    assert "Анонс успешно отправлен!" in session.sent_texts()
+
+
+async def test_cancel_stops_a_pending_album(feed, session):
+    await feed(text="/announce")
+    photo = [{"file_id": "a", "file_unique_id": "b", "width": 90, "height": 90}]
+    await feed(media_group_id="77", photo=photo, caption=LONG_TEXT)
+    await feed(text="/cancel")
+    await asyncio.sleep(1.2)
+
+    assert "copyMessages" not in session.methods()
+    assert "copyMessage" not in session.methods()
+    assert "Команда отменена." in session.sent_texts()
+
+
+async def test_late_album_item_does_not_start_a_second_post(feed, session):
+    await feed(text="/announce")
+    photo = [{"file_id": "a", "file_unique_id": "b", "width": 90, "height": 90}]
+    await feed(media_group_id="88", photo=photo, caption=LONG_TEXT)
+    await asyncio.sleep(1.2)
+    assert session.methods().count("copyMessage") == 1
+
+    await feed(media_group_id="88", photo=photo)
+    await asyncio.sleep(1.2)
+    assert session.methods().count("copyMessage") == 1
+    assert "copyMessages" not in session.methods()

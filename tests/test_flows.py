@@ -79,3 +79,19 @@ async def test_subscribe_izh_is_not_swallowed_by_subscribe(feed, session):
     assert any("укажите id турниров" in text for text in session.sent_texts())
     await feed(text="/get_dates_prefs")
     assert any("настройки дат" in text for text in session.sent_texts())
+
+
+async def test_subscribe_reports_an_api_failure_instead_of_subscribing(
+    feed, session, db, monkeypatch
+):
+    from rating_bot import subscriptions
+
+    monkeypatch.setattr(
+        subscriptions, "get_info", lambda tid: {"id": tid, "name": "Кубок"}
+    )
+    monkeypatch.setattr(subscriptions, "get_applications", lambda tid: None)
+
+    await feed(text="/subscribe 9002")
+
+    assert any("Не удалось получить заявки" in t for t in session.sent_texts())
+    assert db.tournament(9002) is None

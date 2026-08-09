@@ -1,5 +1,6 @@
 """The two scheduled jobs: new applications to review, and deadline reminders."""
 
+import asyncio
 import logging
 from collections import defaultdict
 
@@ -50,13 +51,13 @@ async def check_applications(
                     (tournament.id, tournament.name)
                 )
         try:
-            info = get_info(tournament.id)
+            info = await asyncio.to_thread(get_info, tournament.id)
             if not chat_ids_whitelist and info_is_bad(info):
                 logger.debug(f"adding request for removal of tourn_id {tournament.id}")
                 pending_writes.append((db.delete_tournament, (tournament.id,)))
                 continue
             if DT(info["dateEnd"]) > DT(now()):
-                _collect_new_applications(
+                await _collect_new_applications(
                     db,
                     tournament,
                     chat_ids_whitelist,
@@ -92,10 +93,10 @@ async def check_applications(
         _apply(pending_writes)
 
 
-def _collect_new_applications(
+async def _collect_new_applications(
     db, tournament, chat_ids_whitelist, pending_writes, user_to_message, tournament_applications
 ):
-    fresh = get_applications(tournament.id)
+    fresh = await asyncio.to_thread(get_applications, tournament.id)
     if fresh is None:
         logger.error(
             f"could not get applications for tourn_id {tournament.id}, skipping"
@@ -125,7 +126,7 @@ def _collect_new_applications(
         text = (
             f"Для турнира <b>{tournament.id} {tournament.name}</b> есть {len(fresh)}"
             f" {get_application_form(len(fresh))}. {review_link(host, tournament.id)}\n\n"
-            + format_applications(fresh)
+            + format_applications(fresh, host)
         )
         user_to_message[chat_id].append((tournament.id, text))
         logger.debug(f"added message for {chat_id} about {tournament.id}")
@@ -145,7 +146,7 @@ def _messages_for_chat(
             texts.append(
                 f"Ранее нерассмотренные заявки на турнир <b>{tournament_id} {name}</b>."
                 f" {review_link(host, tournament_id)}\n\n"
-                + format_applications(applications)
+                + format_applications(applications, host)
             )
     return texts
 
@@ -157,7 +158,7 @@ async def make_reminders(bot: Bot, db: Database, config: Config) -> None:
 
     for tournament in db.tournaments():
         logger.info(f"processing tournament {tournament.id}...")
-        info = get_info(tournament.id)
+        info = await asyncio.to_thread(get_info, tournament.id)
         if info_is_bad(info):
             logger.debug(f"adding request for removal of tourn_id {tournament.id}")
             pending_writes.append((db.delete_tournament, (tournament.id,)))
@@ -168,7 +169,7 @@ async def make_reminders(bot: Bot, db: Database, config: Config) -> None:
             continue
         logger.debug(f"getting reminders for tournament {tournament.id}")
         try:
-            reminders = tourn_info_to_reminders(info, DT(now()))
+            reminders = await asyncio.to_thread(tourn_info_to_reminders, info, DT(now()))
         except Exception as e:
             logger.debug(
                 f"exception {type(e)} {e} while trying to get reminders for {tournament.id}"

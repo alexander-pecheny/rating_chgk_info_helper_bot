@@ -32,15 +32,25 @@ async def reply_text(message: Message, text: str) -> None:
         await message.answer(batch, parse_mode=None)
 
 
-def is_command(message: Message) -> bool:
-    return bool(message.text and message.text.startswith("/"))
+def command_name(message: Message) -> str | None:
+    text = message.text or ""
+    if not text.startswith("/"):
+        return None
+    return text.split(maxsplit=1)[0][1:].split("@")[0]
 
 
 class ResetStateOnCommand(BaseMiddleware):
-    """A command always means what it says, even mid-conversation."""
+    """A real command always means what it says, even mid-conversation.
+
+    Only commands the bot actually has: an announcement that happens to start
+    with a slash is conversation input, not an escape.
+    """
+
+    def __init__(self, commands: frozenset[str]):
+        self.commands = commands
 
     async def __call__(self, handler, event: Message, data: dict[str, Any]):
-        if is_command(event):
+        if command_name(event) in self.commands:
             await data["state"].clear()
             # StateFilter reads the raw_state resolved once per update, so
             # clearing the storage alone would not stop a state handler.
@@ -71,12 +81,13 @@ def register_flow(
 
     async def advance(message: Message, text: str, state: FSMContext, data: dict):
         reply, finished = await step(message, text, **data)
-        if reply:
-            await reply_html(message, reply)
+        # Settle the state before the round-trip; updates run concurrently.
         if finished:
             await state.clear()
         else:
             await state.set_state(waiting)
+        if reply:
+            await reply_html(message, reply)
 
     @router.message(Command(command))
     async def entry(message: Message, state: FSMContext, **data):

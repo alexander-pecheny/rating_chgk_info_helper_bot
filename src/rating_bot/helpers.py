@@ -75,14 +75,14 @@ def validate_host(host):
     return host and RE_HOST.search(host) and "." in host
 
 
-def wrap_link(s):
+def wrap_link(s, host):
     id_ = s.split()[0]
-    return f"""<a href="https://{{host}}/player/{id_}">{s}</a>"""
+    return f"""<a href="https://{host}/player/{id_}">{s}</a>"""
 
 
-def tourn_wrap_link(s):
+def tourn_wrap_link(s, host):
     id_ = s.split()[0]
-    return f"""<a href="https://{{host}}/tournament/{id_}">{s}</a>"""
+    return f"""<a href="https://{host}/tournament/{id_}">{s}</a>"""
 
 
 def get_sorting_key(x):
@@ -90,9 +90,9 @@ def get_sorting_key(x):
     return (sp[1], sp[2], sp[0])
 
 
-def format_applications(applications):
+def format_applications(applications, host):
     srt = sorted([applications[x]["rep"] for x in applications], key=get_sorting_key)
-    return "\n".join([wrap_link(rep) for rep in srt])
+    return "\n".join([wrap_link(rep, host) for rep in srt])
 
 
 def get_open_tags(text):

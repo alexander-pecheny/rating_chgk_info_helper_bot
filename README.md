@@ -15,8 +15,10 @@ uv run rating-bot --debug --token_path token_test   # test bot, no scheduled job
 ## Deploying
 
 ```
-git pull && uv sync && sudo systemctl restart rating_bot
+git pull && uv sync --no-dev && sudo systemctl restart rating_bot
 ```
+
+The unit is [deploy/rating_bot.service](./deploy/rating_bot.service); it passes `--data-dir` explicitly rather than relying on the working directory.
 
 ## Logs
 

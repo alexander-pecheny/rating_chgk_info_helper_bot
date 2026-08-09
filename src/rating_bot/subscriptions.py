@@ -42,10 +42,16 @@ def subscribe(
         info = get_info(tournament_id)
         if info_is_bad(info) or not info.get("name"):
             return f"Турнир {tournament_id} не найден."
+        applications = get_applications(tournament_id)
+        if applications is None:
+            # Storing an empty baseline would report zero applications now and
+            # then announce every existing one as new on the next check.
+            logger.error(f"could not get applications for {tournament_id}")
+            return f"Не удалось получить заявки турнира {tournament_id}, попробуйте позже."
         tournament = Tournament(
             id=tournament_id,
             name=info["name"],
-            applications=get_applications(tournament_id) or {},
+            applications=applications,
             subscribers={chat_id: subscription},
         )
         logger.debug(

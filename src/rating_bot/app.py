@@ -65,7 +65,14 @@ def schedule_jobs(
         next_run_time=get_next_reminder_job_time(),
         args=[bot, db, config],
     )
-    scheduler.add_job(store.prune, "interval", hours=24)
+    # Restarts are frequent enough that a plain 24h interval, which restarts
+    # its countdown on every boot, could keep the cap from ever being applied.
+    scheduler.add_job(
+        store.prune,
+        "interval",
+        hours=24,
+        next_run_time=utcnow + datetime.timedelta(minutes=5),
+    )
 
 
 def build_bot(config: Config, store: LogStore, session=None) -> Bot:
@@ -78,6 +85,19 @@ def build_bot(config: Config, store: LogStore, session=None) -> Bot:
     return bot
 
 
+def known_commands(routers) -> frozenset[str]:
+    """Every command the bot actually answers, read off the registered filters."""
+    names = set()
+    for router in routers:
+        for handler in router.message.handlers:
+            for filter_ in handler.filters or ():
+                callback = getattr(filter_, "callback", filter_)
+                for command in getattr(callback, "commands", ()) or ():
+                    if isinstance(command, str):
+                        names.add(command)
+    return frozenset(names)
+
+
 def build_dispatcher(
     config: Config, db: Database, store: LogStore, scheduler: AsyncIOScheduler
 ) -> Dispatcher:
@@ -87,7 +107,7 @@ def build_dispatcher(
     dispatcher["scheduler"] = scheduler
     dispatcher["store"] = store
     dispatcher.update.outer_middleware(IncomingTrafficLog(store))
-    dispatcher.message.outer_middleware(ResetStateOnCommand())
+    dispatcher.message.outer_middleware(ResetStateOnCommand(known_commands(ROUTERS)))
     dispatcher.message.middleware(BanGate())
     for router in ROUTERS:
         dispatcher.include_router(router)

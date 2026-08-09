@@ -73,8 +73,8 @@ async def get_dates_prefs(message: Message, db: Database) -> None:
 
 @router.message(Command("get_dates"))
 async def get_dates(message: Message, state: FSMContext) -> None:
-    await reply_html(message, DATE_PROMPT)
     await state.set_state(Flows.dates_start)
+    await reply_html(message, DATE_PROMPT)
 
 
 @router.message(Flows.dates_start)
@@ -86,8 +86,8 @@ async def dates_start(message: Message, state: FSMContext) -> None:
         await reply_html(message, f"Неверный формат. {DATE_PROMPT}")
         return
     await state.update_data(sync_start=text)
-    await reply_html(message, SYNC_DAYS_PROMPT)
     await state.set_state(Flows.dates_sync_days)
+    await reply_html(message, SYNC_DAYS_PROMPT)
 
 
 @router.message(Flows.dates_sync_days)
@@ -97,8 +97,8 @@ async def dates_sync_days(message: Message, state: FSMContext) -> None:
         await reply_html(message, DAYS_ERROR)
         return
     await state.update_data(sync_days=days)
-    await reply_html(message, ASYNC_DAYS_PROMPT)
     await state.set_state(Flows.dates_async_days)
+    await reply_html(message, ASYNC_DAYS_PROMPT)
 
 
 @router.message(Flows.dates_async_days)
@@ -111,5 +111,5 @@ async def dates_async_days(message: Message, state: FSMContext, db: Database) ->
         async_days,
         stored_dates_prefs(db, message.chat.id),
     )
-    await reply_html(message, dates)
     await state.clear()
+    await reply_html(message, dates)

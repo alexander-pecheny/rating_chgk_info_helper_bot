@@ -7,6 +7,7 @@ back to Telegram by id, so this stays agnostic about how the content is encoded
 
 import asyncio
 import logging
+from collections import deque
 
 from aiogram import Bot, Router
 from aiogram.filters import Command
@@ -36,12 +37,16 @@ FAILED = "Что-то пошло не так :( Напишите разрабо�
 
 _albums: dict[tuple[int, str], list[Message]] = {}
 _album_timers: dict[tuple[int, str], asyncio.Task] = {}
+# Stragglers of an album we already relayed must not start a second post.
+_recently_sent: deque[tuple[int, str]] = deque(maxlen=64)
 
 
 @router.message(Command("announce"))
 async def announce_entry(message: Message, state: FSMContext) -> None:
-    await reply_html(message, PROMPT)
+    # Set the state before the round-trip: updates are handled concurrently, so
+    # a fast follow-up message can arrive while the prompt is still in flight.
     await state.set_state(Flows.announce)
+    await reply_html(message, PROMPT)
 
 
 @router.message(Flows.announce)
@@ -58,21 +63,32 @@ async def _collect_album(
     message: Message, state: FSMContext, bot: Bot, config: Config
 ) -> None:
     key = (message.chat.id, message.media_group_id)
+    if key in _recently_sent:
+        logger.info(f"ignoring album item arriving after {key} was relayed")
+        return
     _albums.setdefault(key, []).append(message)
     if timer := _album_timers.get(key):
         timer.cancel()
 
     async def flush() -> None:
+        # Cancellation means a later item of this album superseded us; the
+        # buffer belongs to its timer now, so unwind without touching it.
+        await asyncio.sleep(ALBUM_DEBOUNCE_SECONDS)
         try:
-            await asyncio.sleep(ALBUM_DEBOUNCE_SECONDS)
-            group = sorted(_albums.pop(key, []), key=lambda m: m.message_id)
-            _album_timers.pop(key, None)
-            if group:
-                await _deliver(group[0], group, state, bot, config)
-        except asyncio.CancelledError:
-            raise
+            group = sorted(_albums.get(key, []), key=lambda m: m.message_id)
+            if not group:
+                return
+            # The organiser may have cancelled while the debounce was pending.
+            if await state.get_state() != Flows.announce.state:
+                logger.info(f"dropping album {key}, conversation already left")
+                return
+            _recently_sent.append(key)
+            await _deliver(group[0], group, state, bot, config)
         except Exception as e:
             logger.error(f"exception {type(e)} {e} while sending album announce")
+        finally:
+            _albums.pop(key, None)
+            _album_timers.pop(key, None)
 
     _album_timers[key] = asyncio.create_task(flush())
 

@@ -1,5 +1,7 @@
 """Subscribing to tournaments, and looking up their results."""
 
+import asyncio
+
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -20,19 +22,27 @@ from rating_bot.subscriptions import subscribe, unsubscribe
 router = Router(name="tournaments")
 
 
+async def _subscribe_all(db: Database, ids, chat_id: int, *, jury_only: bool) -> str:
+    # subscribe() makes blocking API calls; keep them off the event loop.
+    replies = [
+        await asyncio.to_thread(subscribe, db, id_, chat_id, jury_only=jury_only)
+        for id_ in ids
+    ]
+    return "\n".join(replies)
+
+
 async def subscribe_step(message: Message, text: str, *, db: Database, **_):
     ids = get_list_of_ints(text)
     if not ids:
         return ID_TOURNS_TEXT, False
-    return "\n".join(subscribe(db, id_, message.chat.id) for id_ in ids), True
+    return await _subscribe_all(db, ids, message.chat.id, jury_only=False), True
 
 
 async def subscribe_izh_step(message: Message, text: str, *, db: Database, **_):
     ids = get_list_of_ints(text)
     if not ids:
         return ID_TOURNS_TEXT, False
-    replies = [subscribe(db, id_, message.chat.id, jury_only=True) for id_ in ids]
-    return "\n".join(replies), True
+    return await _subscribe_all(db, ids, message.chat.id, jury_only=True), True
 
 
 async def unsubscribe_step(message: Message, text: str, *, db: Database, **_):
@@ -46,7 +56,7 @@ async def top3_step(message: Message, text: str, **_):
     ids = get_list_of_ints(text)
     if len(ids) != 1:
         return ID_TOURN_TEXT, False
-    return get_tourn_top3(ids[0]), True
+    return await asyncio.to_thread(get_tourn_top3, ids[0]), True
 
 
 register_flow(router, command="subscribe", waiting=Flows.subscribe, step=subscribe_step)
@@ -74,5 +84,5 @@ async def my_subscriptions(message: Message, db: Database) -> None:
         await reply_text(message, "Сейчас вы не подписаны ни на один турнир.")
         return
     host = db.prefs(chat_id).get("host") or DEFAULT_HOST
-    listed = "\n".join(tourn_wrap_link(name).format(host=host) for name in names)
+    listed = "\n".join(tourn_wrap_link(name, host) for name in names)
     await reply_html(message, "Турниры, на которые вы подписаны:\n" + listed)
