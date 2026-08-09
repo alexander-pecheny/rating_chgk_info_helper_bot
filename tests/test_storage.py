@@ -66,3 +66,18 @@ async def test_prune_is_a_no_op_when_small(tmp_path):
     assert store.prune() == 0
     with store._cursor() as cur:
         assert cur.execute("select count(*) from traffic").fetchone()[0] == 1
+
+
+async def test_prune_stops_rather_than_emptying_a_file_it_cannot_shrink(
+    tmp_path, monkeypatch
+):
+    store = LogStore(tmp_path / "logs.db", max_bytes=120 * 1024)
+    for i in range(400):
+        store.record_traffic("in", "x" * 2000, chat_id=i, text="t")
+    monkeypatch.setattr(store, "_reclaim", lambda: None)
+
+    store.prune()
+
+    with store._cursor() as cur:
+        remaining = cur.execute("select count(*) from traffic").fetchone()[0]
+    assert remaining > 0

@@ -14,6 +14,8 @@ from typing import Any
 
 from aiogram.client.default import Default
 
+logger = logging.getLogger("rating_bot")
+
 MAX_BYTES = 100 * 1024 * 1024
 _PRUNE_BATCH = 5000
 
@@ -92,6 +94,7 @@ class LogStore:
         """Drop the oldest rows until the file fits under the cap."""
         removed = 0
         while self.size() > self.max_bytes:
+            before = self.size()
             batch = 0
             with self._cursor() as cur:
                 for table in ("traffic", "app_log"):
@@ -105,16 +108,29 @@ class LogStore:
                     )
                     batch += max(cur.rowcount, 0)
             self._reclaim()
+            removed += batch
             if batch == 0:
                 break
-            removed += batch
+            if self.size() >= before:
+                # Deleting rows is not shrinking the file, so continuing would
+                # empty both tables and still miss the cap. An oversized log is
+                # the lesser problem; leave the rest and say so.
+                logger.error(
+                    f"{self.path} stayed at {before} bytes after deleting"
+                    f" {batch} rows; giving up on this pass"
+                )
+                break
         return removed
 
     def _reclaim(self) -> None:
-        # incremental_vacuum yields rows and refuses to share a transaction.
+        # incremental_vacuum yields rows and refuses to share a transaction; it
+        # is also a no-op unless the file header says auto_vacuum=INCREMENTAL.
         conn = sqlite3.connect(self.path, isolation_level=None)
         try:
-            conn.execute("PRAGMA incremental_vacuum").fetchall()
+            mode = conn.execute("PRAGMA auto_vacuum").fetchone()[0]
+            conn.execute(
+                "PRAGMA incremental_vacuum" if mode == 2 else "VACUUM"
+            ).fetchall()
         finally:
             conn.close()
 
