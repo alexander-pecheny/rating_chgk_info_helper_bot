@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram bot rating_chgk_info_helper_bot
+After=network.target
+
+[Service]
+User=ap
+WorkingDirectory=/home/ap/rating_chgk_info_helper_bot
+# Explicit, so config.json, token and the databases never depend on where
+# systemd happened to start the process.
+ExecStart=/home/ap/rating_chgk_info_helper_bot/.venv/bin/rating-bot --data-dir /home/ap/rating_chgk_info_helper_bot
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
