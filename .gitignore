@@ -3,3 +3,8 @@ token_test
 bot.db
 *.log
 admins.json
+.venv
+logs.db
+__pycache__/
+.pytest_cache/
+.ruff_cache/

@@ -1,11 +1,11 @@
+import functools
 import logging
 import time
-import sys
-import functools
 from collections import defaultdict
 
 import httpx
-from dateutil import DT
+
+from rating_bot.dateutil import DT
 
 logger = logging.getLogger("rating_bot")
 
@@ -30,30 +30,30 @@ def _get_appeals(tourn_id):
     return res
 
 
-def _get_info(tourn_id):
+def get_info(tourn_id):
     res = get(f"{API}/tournaments/{tourn_id}.json").json()
     time.sleep(0.5)
     return res
 
 
-def convert_request_info(request):
-    rep = request["representative"]
-    town = request["venue"]["town"]["name"]
+def convert_application(application):
+    rep = application["representative"]
+    town = application["venue"]["town"]["name"]
     return {
-        "status": request["status"],
+        "status": application["status"],
         "rep": f"{rep['id']} {rep['name']} {rep['surname']} ({town})",
     }
 
 
-def _get_requests(t_id, only_new=True):
-    logger.debug(f"getting requests from {t_id}...")
-    req = get(f"{API}/tournaments/{t_id}/requests.json?pagination=false")
+def get_applications(t_id, only_new=True):
+    # What we call an Application, the rating.chgk.info API calls a "request".
+    logger.debug(f"getting applications for {t_id}...")
+    res = get(f"{API}/tournaments/{t_id}/requests.json?pagination=false")
     time.sleep(0.5)
-    if req.status_code != 200:
-        sys.stderr.write(f"got response with error {req.status_code}: {req.text}\n")
+    if res.status_code != 200:
+        logger.error(f"got response with error {res.status_code}: {res.text}")
         return
-    obj = req.json()
-    converted = {str(r["id"]): convert_request_info(r) for r in obj}
+    converted = {str(r["id"]): convert_application(r) for r in res.json()}
     if only_new:
         converted = {k: v for k, v in converted.items() if v["status"] == "N"}
     return converted

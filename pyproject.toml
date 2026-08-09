@@ -1,0 +1,32 @@
+[project]
+name = "rating-bot"
+version = "2.0.0"
+description = "Telegram helper bot for rating.chgk.info tournament organisers"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "aiogram>=3.30.0,<4",
+    "apscheduler>=3.11.3,<4",
+    "httpx>=0.28,<0.29",
+    "msgpack>=1.1,<2",
+]
+
+[project.scripts]
+rating-bot = "rating_bot.app:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.14",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rating_bot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

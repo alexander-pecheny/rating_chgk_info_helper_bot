@@ -1,6 +1,7 @@
-from typing import NamedTuple
 import sqlite3
-from helpers import serialize_chat_ids, default_subscription
+from typing import NamedTuple
+
+from rating_bot.helpers import default_subscription, serialize_chat_ids
 
 
 def parse_chat_ids_old(s):

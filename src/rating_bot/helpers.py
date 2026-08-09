@@ -1,43 +1,26 @@
-import json
 import datetime
 import itertools
+import json
 import re
 import urllib
 
 import msgpack
-from dateutil import UTC_PLUS_3, tryint
 
-API = "https://api.rating.chgk.net"
-DB_INIT = [
-    """CREATE TABLE IF NOT EXISTS data (
-    id integer PRIMARY KEY,
-    name text,
-    state text,
-    chat_ids text,
-    prefs text
-);""",
-    """CREATE TABLE IF NOT EXISTS chat_prefs (
-    chat_id integer PRIMARY KEY,
-    prefs text
-)""",
-    """CREATE TABLE IF NOT EXISTS banned_users (
-    chat_id integer PRIMARY KEY
-)""",
-]
+from rating_bot.dateutil import UTC_PLUS_3, tryint
+
 START = """\
 Привет! Это бот-помощник для турнирного сайта.
 
 Он умеет оповещать о новых заявках на турниры.
 
-Чтобы подписаться на обновления, напиши `/subscribe` и id турниров через запятую, вот так:
+Чтобы подписаться на обновления, напиши <code>/subscribe</code> и id турниров через запятую, вот так:
 
-`/subscribe 7000, 9002, 9015`
+<code>/subscribe 7000, 9002, 9015</code>
 
-Чтобы отписаться, то же самое, но с командой `/unsubscribe`.
+Чтобы отписаться, то же самое, но с командой <code>/unsubscribe</code>.
 """
 ID_TOURNS_TEXT = "Пожалуйста, укажите id турниров через запятую или /cancel для отмены."
 ID_TOURN_TEXT = "Пожалуйста, укажите id турнира или /cancel для отмены."
-NOT_CANCEL = "^(?!/cancel)"
 DEFAULT_HOST = "rating.chgk.info"
 RE_HOST = re.compile("[a-z][a-z\\.]+[a-z]")
 
@@ -59,7 +42,7 @@ def serialize_chat_ids(chat_ids: ChatPrefsType) -> str:
     return msgpack.dumps(chat_ids)
 
 
-def get_req_form(x: int):
+def get_application_form(x: int):
     s_x = str(x)
     if s_x.endswith(("11", "12", "13", "14")):
         return "нерассмотренных заявок"
@@ -107,8 +90,8 @@ def get_sorting_key(x):
     return (sp[1], sp[2], sp[0])
 
 
-def make_msg_from_reqs(reqs):
-    srt = sorted([reqs[x]["rep"] for x in reqs], key=get_sorting_key)
+def format_applications(applications):
+    srt = sorted([applications[x]["rep"] for x in applications], key=get_sorting_key)
     return "\n".join([wrap_link(rep) for rep in srt])
 
 
@@ -199,26 +182,6 @@ def get_batches(res, max_len=2048):
 
 def udumps(s):
     return json.dumps(s, ensure_ascii=False)
-
-
-def is_forward(message):
-    result = False
-    try:
-        if message.forward_origin:
-            result = True
-    except AttributeError:
-        pass
-    try:
-        if message.forward_from_chat:
-            result = True
-    except AttributeError:
-        pass
-    try:
-        if message.forward_from:
-            result = True
-    except AttributeError:
-        pass
-    return result
 
 
 def get_next_reminder_job_time():
