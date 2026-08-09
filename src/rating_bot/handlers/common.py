@@ -42,6 +42,9 @@ class ResetStateOnCommand(BaseMiddleware):
     async def __call__(self, handler, event: Message, data: dict[str, Any]):
         if is_command(event):
             await data["state"].clear()
+            # StateFilter reads the raw_state resolved once per update, so
+            # clearing the storage alone would not stop a state handler.
+            data["raw_state"] = None
         return await handler(event, data)
 
 

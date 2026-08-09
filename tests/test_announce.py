@@ -97,3 +97,11 @@ async def test_command_escapes_the_announce_state(feed, session):
 
     assert "copyMessage" not in session.methods()
     assert any("Привет!" in text for text in session.sent_texts())
+
+
+async def test_a_later_router_command_also_escapes_the_state(feed, session):
+    await feed(text="/announce")
+    await feed(text="/get_dates_prefs")
+
+    assert "copyMessage" not in session.methods()
+    assert any("настройки дат" in text for text in session.sent_texts())

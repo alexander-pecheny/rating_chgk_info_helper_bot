@@ -72,3 +72,10 @@ async def test_traffic_is_recorded_both_ways(feed, store):
 
 async def test_admin_id_fixture_is_not_the_test_chat():
     assert ADMIN_ID != CHAT_ID
+
+
+async def test_subscribe_izh_is_not_swallowed_by_subscribe(feed, session):
+    await feed(text="/subscribe_izh")
+    assert any("укажите id турниров" in text for text in session.sent_texts())
+    await feed(text="/get_dates_prefs")
+    assert any("настройки дат" in text for text in session.sent_texts())
