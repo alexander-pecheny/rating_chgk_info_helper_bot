@@ -20,6 +20,13 @@ dev = [
     "ruff>=0.14",
 ]
 
+# Pin the index so the lockfile does not inherit whatever private registry the
+# machine that ran `uv lock` happened to default to.
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
