@@ -3,11 +3,13 @@ package tg
 import (
 	"strings"
 	"testing"
+
+	"code.pecheny.me/pecheny/rating_chgk_info_helper_bot/internal/store"
 )
 
-func TestSubscribeWithoutIDsAsksAndKeepsAsking(t *testing.T) {
+func TestUnsubscribeWithoutIDsAsksAndKeepsAsking(t *testing.T) {
 	h := newHarness(t)
-	h.send(t, "/subscribe")
+	h.send(t, "/unsubscribe")
 	if !h.telegram.said("укажите id турниров") {
 		t.Fatal("expected the bot to ask for tournament ids")
 	}
@@ -19,7 +21,7 @@ func TestSubscribeWithoutIDsAsksAndKeepsAsking(t *testing.T) {
 
 func TestCancelEndsTheFlow(t *testing.T) {
 	h := newHarness(t)
-	h.send(t, "/subscribe")
+	h.send(t, "/unsubscribe")
 	h.send(t, "/cancel")
 	if !h.telegram.said("Команда отменена.") {
 		t.Fatal("expected the cancellation to be acknowledged")
@@ -134,84 +136,84 @@ func TestTrafficIsRecordedBothWays(t *testing.T) {
 	}
 }
 
-func TestSubscribeIzhIsNotSwallowedBySubscribe(t *testing.T) {
+func TestSubscribeAnswersWithTheSunsetNotice(t *testing.T) {
 	h := newHarness(t)
+	h.send(t, "/subscribe")
 	h.send(t, "/subscribe_izh")
-	if !h.telegram.said("укажите id турниров") {
-		t.Fatal("expected /subscribe_izh to start its own flow")
+	h.send(t, "/subscribe 9002")
+
+	if got := h.telegram.countOf("sendPhoto"); got != 3 {
+		t.Fatalf("expected three sunset photos, got %d", got)
 	}
-	h.send(t, "/get_dates_prefs")
-	if !h.telegram.said("настройки дат") {
-		t.Fatal("a command should escape the flow")
+	photo, _ := h.telegram.lastCallOf("sendPhoto")
+	for _, expected := range []string{"https://t.me/tznatoki/188", "/unsubscribe_all"} {
+		if !strings.Contains(photo.Values["caption"], expected) {
+			t.Fatalf("the caption is missing %q:\n%s", expected, photo.Values["caption"])
+		}
+	}
+	if tournament, _ := h.db.Tournament(9002); tournament != nil {
+		t.Fatal("a subscribe attempt must not store anything")
+	}
+	if got := h.telegram.sentTexts(); len(got) != 0 {
+		t.Fatalf("expected no text replies, got %q", got)
 	}
 }
 
-func TestSubscribeReportsAnAPIFailureInsteadOfSubscribing(t *testing.T) {
+func TestUnsubscribeDropsTheSubscription(t *testing.T) {
 	h := newHarness(t)
-	h.api.answer("/tournaments/9002.json", `{"id":9002,"name":"Кубок"}`)
-	h.api.fail("/tournaments/9002/requests.json", 500)
-
-	h.send(t, "/subscribe 9002")
-
-	if !h.telegram.said("Не удалось получить заявки") {
-		t.Fatalf("expected a failure report, got %q", h.telegram.sentTexts())
-	}
-	tournament, err := h.db.Tournament(9002)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tournament != nil {
-		t.Fatal("a tournament must not be stored when its applications could not be read")
-	}
-}
-
-func TestSubscribeStoresTheTournamentAndItsApplications(t *testing.T) {
-	h := newHarness(t)
-	h.api.answer("/tournaments/9002.json", `{"id":9002,"name":"Кубок"}`)
-	h.api.answer("/tournaments/9002/requests.json", `[
-		{"id":7,"status":"N","representative":{"id":123,"name":"Иван","surname":"Иванов"},
-		 "venue":{"town":{"name":"Москва"}}},
-		{"id":8,"status":"A","representative":{"id":124,"name":"Пётр","surname":"Петров"},
-		 "venue":{"town":{"name":"Тверь"}}}]`)
-
-	h.send(t, "/subscribe 9002")
-
-	if !h.telegram.said("Вы теперь подписаны на турнир <b>9002 Кубок</b>") {
-		t.Fatalf("got %q", h.telegram.sentTexts())
-	}
-	if !h.telegram.said("Там 1 нерассмотренная заявка") {
-		t.Fatalf("only the unreviewed application should be counted, got %q", h.telegram.sentTexts())
-	}
-	tournament, err := h.db.Tournament(9002)
-	if err != nil || tournament == nil {
-		t.Fatalf("tournament not stored: %v", err)
-	}
-	if len(tournament.Applications) != 1 {
-		t.Fatalf("expected one stored application, got %d", len(tournament.Applications))
-	}
-	if _, subscribed := tournament.Subscribers[chatID]; !subscribed {
-		t.Fatal("the chat should be a subscriber")
-	}
-
-	h.send(t, "/subscribe 9002")
-	if !h.telegram.said("Вы уже подписаны") {
-		t.Fatal("a second subscribe should say so")
-	}
+	watchTournament(t, h)
 
 	h.send(t, "/unsubscribe 9002")
-	if !h.telegram.said("Вы теперь отписаны") {
-		t.Fatal("expected an unsubscribe confirmation")
+	if !h.telegram.said("Вы теперь отписаны от турнира <b>9002 Кубок</b>") {
+		t.Fatalf("got %q", h.telegram.sentTexts())
 	}
 	if tournament, _ := h.db.Tournament(9002); tournament != nil {
 		t.Fatal("the last subscriber leaving should drop the tournament")
 	}
+
+	h.send(t, "/unsubscribe 9002")
+	if !h.telegram.said("Вы и так не подписаны на турнир 9002.") {
+		t.Fatal("a second unsubscribe should say so")
+	}
 }
 
-func TestUnknownTournamentIsReportedNotStored(t *testing.T) {
+func TestUnsubscribeAllDropsEverySubscription(t *testing.T) {
 	h := newHarness(t)
-	h.send(t, "/subscribe 1")
-	if !h.telegram.said("Турнир 1 не найден.") {
-		t.Fatalf("got %q", h.telegram.sentTexts())
+	watchTournament(t, h)
+	err := h.db.AddTournament(store.Tournament{
+		ID:           9003,
+		Name:         "Чаша",
+		Applications: map[string]store.Application{},
+		Subscribers: map[int64]store.Subscription{
+			chatID: store.DefaultSubscription(),
+			424242: store.DefaultSubscription(),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h.send(t, "/unsubscribe_all")
+
+	for _, expected := range []string{"<b>9002 Кубок</b>", "<b>9003 Чаша</b>"} {
+		if !h.telegram.said("Вы теперь отписаны от турнира " + expected) {
+			t.Fatalf("missing the goodbye for %s, got %q", expected, h.telegram.sentTexts())
+		}
+	}
+	if tournament, _ := h.db.Tournament(9002); tournament != nil {
+		t.Fatal("the last subscriber leaving should drop the tournament")
+	}
+	tournament, err := h.db.Tournament(9003)
+	if err != nil || tournament == nil {
+		t.Fatalf("a tournament with other subscribers must stay: %v", err)
+	}
+	if _, subscribed := tournament.Subscribers[chatID]; subscribed {
+		t.Fatal("the chat should be gone from the subscribers")
+	}
+
+	h.send(t, "/unsubscribe_all")
+	if !h.telegram.said("Сейчас вы не подписаны ни на один турнир.") {
+		t.Fatal("a repeat unsubscribe_all should say there is nothing left")
 	}
 }
 

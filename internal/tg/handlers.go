@@ -18,8 +18,6 @@ import (
 // The state names are aiogram's, so a conversation begun before the switch to
 // this binary is still understood after it.
 const (
-	stateSubscribe     = "Flows:subscribe"
-	stateSubscribeIzh  = "Flows:subscribe_izh"
 	stateUnsubscribe   = "Flows:unsubscribe"
 	stateTop3          = "Flows:top3"
 	stateHost          = "Flows:host"
@@ -84,9 +82,10 @@ func (b *Bot) registerHandlers() {
 		slog.Info("conversation cancelled", "chat_id", message.Chat.ID)
 	}
 
-	b.registerFlow("subscribe", stateSubscribe, b.subscribeStep(false))
-	b.registerFlow("subscribe_izh", stateSubscribeIzh, b.subscribeStep(true))
+	b.commands["subscribe"] = b.sunset
+	b.commands["subscribe_izh"] = b.sunset
 	b.registerFlow("unsubscribe", stateUnsubscribe, b.unsubscribeStep)
+	b.commands["unsubscribe_all"] = b.unsubscribeAll
 	b.registerFlow("get_top3", stateTop3, b.top3Step)
 	b.registerFlow("set_host", stateHost, b.hostStep)
 	b.registerFlow("set_dates_prefs", stateDatesPrefs, b.datesPrefsStep)
@@ -102,20 +101,6 @@ func (b *Bot) registerHandlers() {
 	b.states[stateAnnounce] = b.announce
 
 	b.registerAdminHandlers()
-}
-
-func (b *Bot) subscribeStep(juryOnly bool) Step {
-	return func(_ context.Context, message *models.Message, input string) (string, bool) {
-		ids := text.ListOfInts(input)
-		if len(ids) == 0 {
-			return text.IDTournsPrompt, false
-		}
-		replies := make([]string, 0, len(ids))
-		for _, id := range ids {
-			replies = append(replies, b.Subscribe(id, message.Chat.ID, juryOnly))
-		}
-		return strings.Join(replies, "\n"), true
-	}
 }
 
 func (b *Bot) unsubscribeStep(_ context.Context, message *models.Message, input string) (string, bool) {

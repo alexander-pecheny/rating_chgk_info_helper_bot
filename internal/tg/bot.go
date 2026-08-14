@@ -1,6 +1,7 @@
 package tg
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -213,6 +214,18 @@ func (b *Bot) send(ctx context.Context, chatID int64, message string, html bool)
 		if _, err := b.api.SendMessage(ctx, params); err != nil {
 			slog.Error("messaging chat", "chat_id", chatID, "err", err)
 		}
+	}
+}
+
+func (b *Bot) sendPhoto(ctx context.Context, chatID int64, name string, photo []byte, caption string) {
+	params := &bot.SendPhotoParams{
+		ChatID:  chatID,
+		Photo:   &models.InputFileUpload{Filename: name, Data: bytes.NewReader(photo)},
+		Caption: caption,
+	}
+	b.logs.RecordTraffic("out", "sendPhoto", chatID, caption, jsonOf(params))
+	if _, err := b.api.SendPhoto(ctx, params); err != nil {
+		slog.Error("sending photo", "chat_id", chatID, "err", err)
 	}
 }
 
