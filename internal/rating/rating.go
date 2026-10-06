@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const DefaultAPI = "https://api.rating.chgk.net"
+const DefaultAPI = "https://api.rating.chgk.info"
 
 // betweenCalls keeps the bot from hammering a site run by volunteers.
 const betweenCalls = 500 * time.Millisecond
