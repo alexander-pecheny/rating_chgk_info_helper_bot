@@ -11,6 +11,8 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+
+	"code.pecheny.me/pecheny/rating_chgk_info_helper_bot/internal/store"
 )
 
 // An announcement is still just a message handed back to Telegram by id, so
@@ -27,6 +29,17 @@ const (
 	unparseable    = "Не получилось распарсить сообщение :( Введите новую версию или нажмите /cancel"
 	announceSent   = "Анонс успешно отправлен!"
 	announceFailed = "Что-то пошло не так :( Напишите разработчику бота"
+
+	// Past this an author can no longer take a post back; Telegram itself
+	// stops bots deleting channel posts at 48 hours.
+	announceRevisable = 24 * time.Hour
+
+	editPrompt     = "Пришлите новую версию анонса, она заменит предыдущую:"
+	noRecentPost   = "За последние сутки вы не отправляли анонсов через бота."
+	announceGone   = "Анонс удалён."
+	deleteFailed   = "Не получилось удалить анонс :( Напишите разработчику бота"
+	announceEdited = "Анонс заменён!"
+	oldNotDeleted  = "Новая версия отправлена, но старую удалить не получилось :( Напишите разработчику бота"
 )
 
 type albumKey struct {
@@ -70,6 +83,58 @@ func (b *Bot) announceEntry(ctx context.Context, message *models.Message) {
 		slog.Error("saving conversation state", "err", err)
 	}
 	b.reply(ctx, message, announcePrompt)
+}
+
+// lastAnnounce answers the author itself when there is nothing to revise.
+func (b *Bot) lastAnnounce(ctx context.Context, message *models.Message) *store.Announce {
+	last, err := b.db.LastAnnounce(b.key(message).UserID, time.Now().Add(-announceRevisable))
+	if err != nil {
+		slog.Error("looking up last announce", "err", err)
+	}
+	if last == nil {
+		b.reply(ctx, message, noRecentPost)
+	}
+	return last
+}
+
+func (b *Bot) deleteEntry(ctx context.Context, message *models.Message) {
+	last := b.lastAnnounce(ctx, message)
+	if last == nil {
+		return
+	}
+	if b.removeAnnounce(ctx, last) {
+		b.reply(ctx, message, announceGone)
+	} else {
+		b.reply(ctx, message, deleteFailed)
+	}
+}
+
+func (b *Bot) editEntry(ctx context.Context, message *models.Message) {
+	last := b.lastAnnounce(ctx, message)
+	if last == nil {
+		return
+	}
+	err := b.fsm.Set(b.key(message), store.State{
+		Name: stateAnnounce, Data: map[string]any{"replaces": last.ID},
+	})
+	if err != nil {
+		slog.Error("saving conversation state", "err", err)
+	}
+	b.reply(ctx, message, editPrompt)
+}
+
+func (b *Bot) removeAnnounce(ctx context.Context, announce *store.Announce) bool {
+	target := b.config.AnnounceChannelID
+	params := &bot.DeleteMessagesParams{ChatID: target, MessageIDs: announce.MessageIDs}
+	b.logs.RecordTraffic("out", "deleteMessages", target, "", jsonOf(params))
+	if _, err := b.api.DeleteMessages(ctx, params); err != nil {
+		slog.Error("deleting announce", "message_ids", announce.MessageIDs, "err", err)
+		return false
+	}
+	if err := b.db.DeleteAnnounce(announce.ID); err != nil {
+		slog.Error("forgetting deleted announce", "id", announce.ID, "err", err)
+	}
+	return true
 }
 
 func (b *Bot) announce(ctx context.Context, message *models.Message) {
@@ -140,61 +205,100 @@ func (b *Bot) deliverAnnounce(ctx context.Context, message *models.Message, grou
 		return
 	}
 
-	chatID := message.Chat.ID
-	isForward := group[0].ForwardOrigin != nil
-	sent := b.relay(ctx, chatID, messageIDs, isForward)
-	if !sent && !isForward {
-		slog.Info("copy refused, forwarding instead", "message_ids", messageIDs)
-		sent = b.relay(ctx, chatID, messageIDs, true)
+	key := b.key(message)
+	replaces := int64(b.fsm.Get(key).Int("replaces"))
+	if err := b.fsm.Clear(key); err != nil {
+		slog.Error("clearing conversation state", "err", err)
 	}
 
-	if sent {
-		b.reply(ctx, message, announceSent)
-		slog.Info("announce sent", "chat_id", chatID, "text", body)
-	} else {
+	chatID := message.Chat.ID
+	isForward := group[0].ForwardOrigin != nil
+	posted, sent := b.relay(ctx, chatID, messageIDs, isForward)
+	if !sent && !isForward {
+		slog.Info("copy refused, forwarding instead", "message_ids", messageIDs)
+		posted, sent = b.relay(ctx, chatID, messageIDs, true)
+	}
+	if !sent {
 		b.reply(ctx, message, announceFailed)
 		slog.Error("could not send announce", "chat_id", chatID)
+		return
 	}
-	if err := b.fsm.Clear(b.key(message)); err != nil {
-		slog.Error("clearing conversation state", "err", err)
+	slog.Info("announce sent", "chat_id", chatID, "text", body)
+	if err := b.db.RecordAnnounce(key.UserID, posted, time.Now()); err != nil {
+		slog.Error("recording announce", "err", err)
+	}
+
+	switch {
+	case replaces == 0:
+		b.reply(ctx, message, announceSent)
+	case b.replaceAnnounce(ctx, key.UserID, replaces):
+		b.reply(ctx, message, announceEdited)
+	default:
+		b.reply(ctx, message, oldNotDeleted)
 	}
 }
 
+// replaceAnnounce deletes the post an /edit started from, provided it is
+// still the author's to delete.
+func (b *Bot) replaceAnnounce(ctx context.Context, authorID, id int64) bool {
+	old, err := b.db.Announce(authorID, id)
+	if err != nil || old == nil {
+		slog.Error("finding the announce being replaced", "id", id, "err", err)
+		return false
+	}
+	return b.removeAnnounce(ctx, old)
+}
+
 // relay hands the message back to Telegram by id, copying it when it is the
-// organiser's own and forwarding it when it is not.
-func (b *Bot) relay(ctx context.Context, fromChatID int64, messageIDs []int, forward bool) bool {
+// organiser's own and forwarding it when it is not. It returns the ids the
+// post got in the channel.
+func (b *Bot) relay(ctx context.Context, fromChatID int64, messageIDs []int, forward bool) ([]int, bool) {
 	target := b.config.AnnounceChannelID
-	method, err := b.callRelay(ctx, target, fromChatID, messageIDs, forward)
+	method, posted, err := b.callRelay(ctx, target, fromChatID, messageIDs, forward)
 	b.logs.RecordTraffic("out", method, target, "", jsonOf(map[string]any{
 		"chat_id": target, "from_chat_id": fromChatID, "message_ids": messageIDs,
 	}))
 	if err != nil {
 		slog.Error("relaying announce", "method", method, "message_ids", messageIDs,
 			"target", target, "err", err)
-		return false
+		return nil, false
 	}
-	return true
+	return posted, true
 }
 
 func (b *Bot) callRelay(
 	ctx context.Context, target, fromChatID int64, messageIDs []int, forward bool,
-) (string, error) {
+) (string, []int, error) {
 	if len(messageIDs) > 1 {
 		if forward {
-			_, err := b.api.ForwardMessages(ctx, &bot.ForwardMessagesParams{
+			ids, err := b.api.ForwardMessages(ctx, &bot.ForwardMessagesParams{
 				ChatID: target, FromChatID: fromChatID, MessageIDs: messageIDs})
-			return "forwardMessages", err
+			return "forwardMessages", idsOf(ids), err
 		}
-		_, err := b.api.CopyMessages(ctx, &bot.CopyMessagesParams{
+		ids, err := b.api.CopyMessages(ctx, &bot.CopyMessagesParams{
 			ChatID: target, FromChatID: fromChatID, MessageIDs: messageIDs})
-		return "copyMessages", err
+		return "copyMessages", idsOf(ids), err
 	}
 	if forward {
-		_, err := b.api.ForwardMessage(ctx, &bot.ForwardMessageParams{
+		posted, err := b.api.ForwardMessage(ctx, &bot.ForwardMessageParams{
 			ChatID: target, FromChatID: fromChatID, MessageID: messageIDs[0]})
-		return "forwardMessage", err
+		if err != nil {
+			return "forwardMessage", nil, err
+		}
+		return "forwardMessage", []int{posted.ID}, nil
 	}
-	_, err := b.api.CopyMessage(ctx, &bot.CopyMessageParams{
+	posted, err := b.api.CopyMessage(ctx, &bot.CopyMessageParams{
 		ChatID: target, FromChatID: fromChatID, MessageID: messageIDs[0]})
-	return "copyMessage", err
+	if err != nil {
+		return "copyMessage", nil, err
+	}
+	return "copyMessage", []int{posted.ID}, nil
+}
+
+func idsOf(messages []models.MessageID) []int {
+	ids := make([]int, 0, len(messages))
+	for _, message := range messages {
+		ids = append(ids, message.ID)
+	}
+	return ids
 }

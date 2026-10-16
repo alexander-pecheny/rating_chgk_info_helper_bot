@@ -24,7 +24,7 @@ A formal challenge to a ruling on a played tournament, resolved by the appeals j
 A message warning a subscriber that a controversials or appeals deadline is approaching.
 
 **Announce**:
-An announcement an organiser submits to the bot, which the bot relays verbatim into the announce channel. Only the organiser writes it; the bot never composes one.
+An announcement an organiser submits to the bot, which the bot relays verbatim into the announce channel. Only the organiser writes it; the bot never composes one. For 24 hours the organiser can delete their latest announce or replace it with a new version.
 
 **Announce Channel**:
 The single Telegram channel every announce is relayed into.

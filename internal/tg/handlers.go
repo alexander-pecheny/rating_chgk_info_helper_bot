@@ -99,6 +99,8 @@ func (b *Bot) registerHandlers() {
 
 	b.commands["announce"] = b.announceEntry
 	b.states[stateAnnounce] = b.announce
+	b.commands["delete"] = b.deleteEntry
+	b.commands["edit"] = b.editEntry
 
 	b.registerAdminHandlers()
 }

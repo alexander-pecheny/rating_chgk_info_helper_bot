@@ -226,3 +226,81 @@ func TestLateAlbumItemDoesNotStartASecondPost(t *testing.T) {
 		t.Fatal("a straggler must not be relayed as its own album")
 	}
 }
+
+func deletedIDs(t *testing.T, h *harness) []int {
+	t.Helper()
+	deleted, ok := h.telegram.lastCallOf("deleteMessages")
+	if !ok {
+		t.Fatalf("expected a deletion, calls were %v", h.telegram.methods())
+	}
+	var ids []int
+	if err := json.Unmarshal([]byte(deleted.Values["message_ids"]), &ids); err != nil {
+		t.Fatalf("message_ids was %q: %v", deleted.Values["message_ids"], err)
+	}
+	return ids
+}
+
+func TestDeleteRemovesTheLastAnnounceFromTheChannel(t *testing.T) {
+	h := newHarness(t)
+	if err := h.db.RecordAnnounce(chatID, []int{7, 8}, time.Now().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	h.send(t, "/delete")
+
+	if ids := deletedIDs(t, h); len(ids) != 2 || ids[0] != 7 {
+		t.Fatalf("deleted %v", ids)
+	}
+	if !h.telegram.said(announceGone) {
+		t.Fatal("expected the deletion reply")
+	}
+
+	h.send(t, "/delete")
+	if got := h.telegram.countOf("deleteMessages"); got != 1 {
+		t.Fatalf("a deleted post was deleted again: %d calls", got)
+	}
+	if !h.telegram.said(noRecentPost) {
+		t.Fatal("expected the bot to say there is nothing left")
+	}
+}
+
+func TestADayOldAnnounceCannotBeDeleted(t *testing.T) {
+	h := newHarness(t)
+	if err := h.db.RecordAnnounce(chatID, []int{7}, time.Now().Add(-25*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	h.send(t, "/delete")
+
+	if h.telegram.called("deleteMessages") {
+		t.Fatal("a post older than a day must stay")
+	}
+	if !h.telegram.said(noRecentPost) {
+		t.Fatal("expected the bot to say there is nothing recent")
+	}
+}
+
+func TestEditReplacesTheLastAnnounce(t *testing.T) {
+	h := newHarness(t)
+	h.send(t, "/announce")
+	h.send(t, longText)
+
+	h.send(t, "/edit")
+	if !h.telegram.said(editPrompt) {
+		t.Fatal("expected the prompt for a new version")
+	}
+	h.send(t, "Исправленный анонс. "+longText)
+
+	if got := h.telegram.countOf("copyMessage"); got != 2 {
+		t.Fatalf("expected the new version to be posted, got %d copies", got)
+	}
+	if ids := deletedIDs(t, h); len(ids) != 1 {
+		t.Fatalf("deleted %v", ids)
+	}
+	if !h.telegram.said(announceEdited) {
+		t.Fatal("expected the replacement reply")
+	}
+
+	h.send(t, "/delete")
+	if got := h.telegram.countOf("deleteMessages"); got != 2 {
+		t.Fatalf("the new version should be the one /delete removes, got %d deletions", got)
+	}
+}

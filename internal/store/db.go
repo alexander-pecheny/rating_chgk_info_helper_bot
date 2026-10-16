@@ -38,6 +38,13 @@ var botSchema = []string{
     updated_at real NOT NULL,
     PRIMARY KEY (bot_id, chat_id, user_id, thread_id, destiny)
 )`,
+	`CREATE TABLE IF NOT EXISTS announces (
+    id integer PRIMARY KEY,
+    author_id integer NOT NULL,
+    message_ids text NOT NULL,
+    sent_at integer NOT NULL
+)`,
+	`CREATE INDEX IF NOT EXISTS announces_by_author ON announces (author_id, sent_at)`,
 }
 
 // Subscription records which of the three notification kinds a chat wants:

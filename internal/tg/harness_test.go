@@ -80,6 +80,8 @@ func (f *fakeTelegram) serve(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"ok":true,"result":[]}`)
 	case "copyMessage":
 		fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%d}}`, id)
+	case "deleteMessages":
+		fmt.Fprint(w, `{"ok":true,"result":true}`)
 	case "copyMessages", "forwardMessages":
 		fmt.Fprintf(w, `{"ok":true,"result":[{"message_id":%d}]}`, id)
 	default:
